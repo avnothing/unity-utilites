@@ -98,3 +98,10 @@ test("modmail reacts to DMs, presents an embedded team selector and creates one 
   assert.match(modmail, /Object\.assign\(ticket, updated\.ticket\)/);
   assert.doesNotMatch(modmail, /const ticket = created\.ticket;\s+await ensureChannel\(ticket\);\s+await sendUserMessageToStaff\(ticket, message\);/);
 });
+
+test("uses the Unity Airlines support emoji for ticket intake", () => {
+  const modmail = read("src/modmail.js");
+  assert.match(modmail, /SUPPORT_EMOJI_ID = "1532706319889600672"/);
+  assert.match(modmail, /message\.react\(SUPPORT_EMOJI_ID\)/);
+  assert.match(modmail, /emoji: team\.emoji \|\| \{ id: SUPPORT_EMOJI_ID \}/);
+});

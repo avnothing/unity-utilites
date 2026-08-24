@@ -13,6 +13,8 @@ const {
 } = require("discord.js");
 
 const PREFIX = "unity-modmail";
+const SUPPORT_EMOJI_ID = "1532706319889600672";
+const SUPPORT_EMOJI_URL = `https://cdn.discordapp.com/emojis/${SUPPORT_EMOJI_ID}.png?size=128&quality=lossless`;
 const STAFF_CHANNEL_PERMISSIONS = [
   PermissionFlagsBits.ViewChannel,
   PermissionFlagsBits.SendMessages,
@@ -165,6 +167,7 @@ function createModmail({ client, guild, api, logger = console }) {
       .setTitle(`Support ticket #${ticket.ticketNumber} opened`)
       .setDescription(`Your message has been sent to **${team?.name || "General Support"}**. Reply in this direct message at any time to continue the conversation.`)
       .addFields({ name: "Status", value: "Open · waiting for a staff member", inline: true })
+      .setThumbnail(SUPPORT_EMOJI_URL)
       .setFooter({ text: "Unity Airlines Support" })
       .setTimestamp();
   }
@@ -207,7 +210,7 @@ function createModmail({ client, guild, api, logger = console }) {
         label: team.name.slice(0, 100),
         value: team.id,
         description: (team.description || `Contact ${team.name}`).slice(0, 100),
-        ...(team.emoji ? { emoji: team.emoji } : {})
+        emoji: team.emoji || { id: SUPPORT_EMOJI_ID }
       })));
     await message.author.send({
       embeds: [new EmbedBuilder()
@@ -215,13 +218,14 @@ function createModmail({ client, guild, api, logger = console }) {
         .setTitle("Unity Airlines Support")
         .setDescription(config.settings?.welcomeMessage || "Welcome to Unity Airlines Support. Choose the team that can best help you.")
         .addFields({ name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." })
+        .setThumbnail(SUPPORT_EMOJI_URL)
         .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
       components: [new ActionRowBuilder().addComponents(select)]
     });
   }
 
   async function handleDirectMessage(message) {
-    await message.react("📩").catch(() => null);
+    await message.react(SUPPORT_EMOJI_ID).catch(() => message.react("📩").catch(() => null));
     const existing = await api.openTicket(message.author.id);
     if (existing.ticket) return sendUserMessageToStaff(existing.ticket, message);
     if (pendingMessages.has(message.author.id)) {
