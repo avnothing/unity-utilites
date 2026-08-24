@@ -160,6 +160,13 @@ function createModmail({ client, guild, api, logger = console }) {
     );
   }
 
+  function isConfiguredSupportStaff(member) {
+    if (!member) return false;
+    if (member.permissions.has(PermissionFlagsBits.Administrator) || member.permissions.has(PermissionFlagsBits.ManageMessages)) return true;
+    const supportRoleIds = new Set((cachedConfig.teams || []).flatMap(team => team.staffRoleIds || []));
+    return [...supportRoleIds].some(roleId => member.roles.cache.has(roleId));
+  }
+
   function permissionOverwrites(team) {
     const staff = (team?.staffRoleIds || []).map(roleId => ({ id: roleId, allow: STAFF_CHANNEL_PERMISSIONS }));
     return [
@@ -534,6 +541,9 @@ function createModmail({ client, guild, api, logger = console }) {
     const subcommand = interaction.options.getSubcommand();
     await interaction.deferReply({ ephemeral: true });
     try {
+      await getConfig();
+      const commandMember = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
+      if (!isConfiguredSupportStaff(commandMember)) throw new Error("Only configured Unity Airlines support staff can use ticket commands.");
       if (subcommand === "reopen") {
         if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) throw new Error("You need Manage Messages to reopen tickets.");
         const ticketNumber = interaction.options.getInteger("ticket_number", true);
@@ -645,7 +655,7 @@ function createModmail({ client, guild, api, logger = console }) {
         if (!message) throw new Error("That request expired. Send the bot a new direct message to try again.");
         pendingMessages.delete(interaction.user.id);
         const ticket = await openForMessage(message, interaction.values[0], { notify: false });
-        await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
+        await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket), attachments: [] });
         return true;
       }
       if (action === "user-close" && interaction.isButton()) {

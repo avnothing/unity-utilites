@@ -83,6 +83,8 @@ test("ticket commands include notes, mandatory close reasons, close delays, tran
   assert.match(modmail, /async function startCloseDelay/);
   assert.match(index, /setName\("reason"\).*setRequired\(true\)/);
   assert.match(modmail, /Private staff note/);
+  assert.match(modmail, /Only configured Unity Airlines support staff can use ticket commands/);
+  assert.match(modmail, /function isConfiguredSupportStaff/);
 });
 
 test("runs cached role reconciliation every twenty seconds", () => {
@@ -111,6 +113,7 @@ test("uses the Unity Airlines support emoji for ticket intake", () => {
   assert.match(modmail, /"human resources": "1533033756577890394"/);
   assert.match(modmail, /emoji: teamEmoji\(team\)/);
   assert.match(modmail, /support-banner\.png/);
+  assert.match(modmail, /attachments: \[\]/);
 });
 
 test("ticket lifecycle closes departed members and lets configured customers cancel their own ticket", () => {
