@@ -1,6 +1,7 @@
 const http = require("node:http");
 const {
   ActionRowBuilder,
+  ActivityType,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
@@ -148,7 +149,7 @@ async function handleSupportPanelCommand(interaction) {
   const channel = interaction.options.getChannel("channel") || interaction.channel;
   if (!channel?.isTextBased()) return interaction.editReply("Choose a text channel for the support panel.");
   const embed = new EmbedBuilder()
-    .setColor(0x22a87a)
+    .setColor(0x0a8f5b)
     .setTitle("Unity Airlines Support")
     .setDescription("Need help from our team? Open a private conversation by messaging Unity Utilities. You will be asked to choose the support team that can best help you.")
     .addFields({ name: "Private and secure", value: "Your messages are relayed to a private support channel and recorded in the ticket transcript." })
@@ -165,7 +166,7 @@ async function handleUtilitiesStatus(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const hub = await modmail.getConfig(true);
   const embed = new EmbedBuilder()
-    .setColor(state.ready ? 0x22a87a : 0xef4444)
+    .setColor(state.ready ? 0x0a8f5b : 0xef4444)
     .setTitle("Unity Utilities status")
     .addFields(
       { name: "Discord", value: state.ready ? `Online · ${Math.round(client.ws.ping)} ms` : "Starting", inline: true },
@@ -192,9 +193,10 @@ client.once(Events.ClientReady, async readyClient => {
       if (guild.id !== config.guildId) await guild.leave().catch(() => null);
     }
     roleSync = createRoleSync({ guild: state.guild, api });
-    modmail = createModmail({ client: readyClient, guild: state.guild, api });
+    modmail = createModmail({ client: readyClient, guild: state.guild, api, portalUrl: config.portalUrl });
     await Promise.all([registerCommands(), publishCatalogue(), modmail.getConfig(true)]);
     state.ready = true;
+    readyClient.user.setPresence({ activities: [{ name: "DM me for support.", type: ActivityType.Playing }], status: "online" });
     console.log(`Unity utilities bot ready as ${readyClient.user.tag} in ${state.guild.name}.`);
     roleSync.syncAll({ refreshMembers: true }).then(() => { state.lastRoleSyncAt = new Date().toISOString(); }).catch(error => console.error(`Initial role sync failed: ${error.message}`));
     catalogueTimer = safeInterval(publishCatalogue, 5 * 60_000, "Catalogue refresh failed");

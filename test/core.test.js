@@ -94,7 +94,7 @@ test("runs cached role reconciliation every twenty seconds", () => {
 test("modmail reacts to DMs, presents an embedded team selector and creates one channel", () => {
   const modmail = read("src/modmail.js");
   assert.match(modmail, /message\.react\("📩"\)/);
-  assert.match(modmail, /setTitle\("Unity Airlines Support"\)/);
+  assert.match(modmail, /supportPanelTitle/);
   assert.match(modmail, /setCustomId\(`\$\{PREFIX\}:new:\$\{message\.author\.id\}`\)/);
   assert.match(modmail, /Object\.assign\(ticket, updated\.ticket\)/);
   assert.doesNotMatch(modmail, /const ticket = created\.ticket;\s+await ensureChannel\(ticket\);\s+await sendUserMessageToStaff\(ticket, message\);/);
@@ -104,7 +104,11 @@ test("uses the Unity Airlines support emoji for ticket intake", () => {
   const modmail = read("src/modmail.js");
   assert.match(modmail, /SUPPORT_EMOJI_ID = "1532706319889600672"/);
   assert.match(modmail, /message\.react\(SUPPORT_EMOJI_ID\)/);
-  assert.match(modmail, /emoji: team\.emoji \|\| \{ id: SUPPORT_EMOJI_ID \}/);
+  assert.match(modmail, /"public relations": "1533033769144029334"/);
+  assert.match(modmail, /"general support": "1533033753793007647"/);
+  assert.match(modmail, /"human resources": "1533033756577890394"/);
+  assert.match(modmail, /emoji: teamEmoji\(team\)/);
+  assert.match(modmail, /support-banner\.png/);
 });
 
 test("ticket lifecycle closes departed members and lets configured customers cancel their own ticket", () => {
@@ -116,4 +120,15 @@ test("ticket lifecycle closes departed members and lets configured customers can
   assert.match(modmail, /user-close/);
   assert.match(modmail, /cancelCloseDelayForCustomerReply/);
   assert.match(modmail, /dueCloseDelays/);
+});
+
+test("uses branded, template-driven customer embeds and shows staff rank", () => {
+  const index = read("index.js");
+  const modmail = read("src/modmail.js");
+  assert.match(index, /DM me for support\./);
+  assert.match(modmail, /const BRAND_GREEN = 0x0a8f5b/);
+  assert.match(modmail, /function renderTemplate/);
+  assert.match(modmail, /function staffRank/);
+  assert.match(modmail, /name: "Rank"/);
+  assert.doesNotMatch(modmail, /Open · waiting for a staff member/);
 });

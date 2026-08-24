@@ -15,6 +15,12 @@ const {
 const PREFIX = "unity-modmail";
 const SUPPORT_EMOJI_ID = "1532706319889600672";
 const SUPPORT_EMOJI_URL = `https://cdn.discordapp.com/emojis/${SUPPORT_EMOJI_ID}.png?size=128&quality=lossless`;
+const BRAND_GREEN = 0x0a8f5b;
+const TEAM_EMOJI_IDS = {
+  "public relations": "1533033769144029334",
+  "general support": "1533033753793007647",
+  "human resources": "1533033756577890394"
+};
 const STAFF_CHANNEL_PERMISSIONS = [
   PermissionFlagsBits.ViewChannel,
   PermissionFlagsBits.SendMessages,
@@ -88,12 +94,13 @@ function ticketControls(ticketId) {
   );
 }
 
-function createModmail({ client, guild, api, logger = console }) {
+function createModmail({ client, guild, api, portalUrl = "", logger = console }) {
   let cachedConfig = { settings: {}, teams: [], presets: [] };
   let configLoadedAt = 0;
   let pollingActions = false;
   const pendingMessages = new Map();
   const closeTimers = new Map();
+  const supportBannerUrl = `${String(portalUrl).replace(/\/$/, "")}/assets/support-banner.png`;
 
   async function getConfig(force = false) {
     if (force || Date.now() - configLoadedAt > 60_000) {
@@ -105,6 +112,40 @@ function createModmail({ client, guild, api, logger = console }) {
 
   function teamById(teamId) {
     return (cachedConfig.teams || []).find(team => team.id === teamId) || null;
+  }
+
+  function teamEmoji(team) {
+    const id = TEAM_EMOJI_IDS[String(team?.name || "").trim().toLowerCase()];
+    return id ? { id } : (team?.emoji || { id: SUPPORT_EMOJI_ID });
+  }
+
+  function ticketTemplateValues(ticket, values = {}) {
+    const team = teamById(ticket?.teamId);
+    const normalized = {
+      "ticket type": team?.name || "General Support",
+      "ticket number": ticket?.ticketNumber ? String(ticket.ticketNumber) : "",
+      user: ticket?.discordUsername || "Customer",
+      "user id": ticket?.discordUserId || "",
+      "staff name": "Unity Airlines Support",
+      "staff rank": "Support Team",
+      message: "",
+      reason: "",
+      "close time": "",
+      ...values
+    };
+    return Object.fromEntries(Object.entries(normalized).map(([key, value]) => [key.toLowerCase(), String(value ?? "")]));
+  }
+
+  function renderTemplate(template, values, fallback) {
+    const source = String(template || fallback || "");
+    return source.replace(/\[([^\]]+)\]/g, (token, key) => values[String(key).trim().toLowerCase()] ?? token);
+  }
+
+  function staffRank(member) {
+    const roles = member?.roles?.cache ? [...member.roles.cache.values()] : [];
+    return roles
+      .filter(role => role.id !== guild.roles.everyone.id && !role.managed)
+      .sort((left, right) => right.position - left.position)[0]?.name || "Unity Airlines Staff";
   }
 
   function hasTeamAccess(member, ticket, channel = null) {
@@ -147,7 +188,7 @@ function createModmail({ client, guild, api, logger = console }) {
     const updated = await api.updateTicket(ticket.id, { action: "channel", channelId: channel.id });
     Object.assign(ticket, updated.ticket);
     const embed = new EmbedBuilder()
-      .setColor(0x22a87a)
+      .setColor(BRAND_GREEN)
       .setTitle(`Modmail #${ticket.ticketNumber}`)
       .setDescription(`Support request from <@${ticket.discordUserId}> (${ticket.discordUsername}).`)
       .addFields(
@@ -161,13 +202,11 @@ function createModmail({ client, guild, api, logger = console }) {
   }
 
   function ticketOpenedEmbed(ticket) {
-    const team = teamById(ticket.teamId);
+    const values = ticketTemplateValues(ticket);
     return new EmbedBuilder()
-      .setColor(0x22a87a)
-      .setTitle(`Support ticket #${ticket.ticketNumber} opened`)
-      .setDescription(`Your message has been sent to **${team?.name || "General Support"}**. Reply in this direct message at any time to continue the conversation.`)
-      .addFields({ name: "Status", value: "Open · waiting for a staff member", inline: true })
-      .setThumbnail(SUPPORT_EMOJI_URL)
+      .setColor(BRAND_GREEN)
+      .setTitle(renderTemplate(cachedConfig.settings?.ticketOpenedTitle, values, "Support ticket #[ticket number] opened"))
+      .setDescription(renderTemplate(cachedConfig.settings?.ticketOpenedMessage, values, "Your message has been sent to **[ticket type]**. Reply in this direct message at any time to continue the conversation."))
       .setFooter({ text: "Unity Airlines Support" })
       .setTimestamp();
   }
@@ -183,7 +222,7 @@ function createModmail({ client, guild, api, logger = console }) {
     const channel = await ensureChannel(ticket);
     const attachments = attachmentList([...message.attachments.values()]);
     const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
+      .setColor(BRAND_GREEN)
       .setAuthor({ name: message.author.tag || message.author.username, iconURL: message.author.displayAvatarURL() })
       .setDescription(message.content || "*Attachment only*")
       .setFooter({ text: `User → Staff · ${message.author.id}` })
@@ -217,15 +256,16 @@ function createModmail({ client, guild, api, logger = console }) {
         label: team.name.slice(0, 100),
         value: team.id,
         description: (team.description || `Contact ${team.name}`).slice(0, 100),
-        emoji: team.emoji || { id: SUPPORT_EMOJI_ID }
+        emoji: teamEmoji(team)
       })));
+    const values = ticketTemplateValues(null, { "ticket type": "Support" });
     await message.author.send({
       embeds: [new EmbedBuilder()
-        .setColor(0x22a87a)
-        .setTitle("Unity Airlines Support")
-        .setDescription(config.settings?.welcomeMessage || "Welcome to Unity Airlines Support. Choose the team that can best help you.")
+        .setColor(BRAND_GREEN)
+        .setTitle(renderTemplate(config.settings?.supportPanelTitle, values, "Unity Airlines Support"))
+        .setDescription(renderTemplate(config.settings?.welcomeMessage, values, "Welcome to Unity Airlines Support. Choose the team that can best help you."))
         .addFields({ name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." })
-        .setThumbnail(SUPPORT_EMOJI_URL)
+        .setImage(supportBannerUrl)
         .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
       components: [new ActionRowBuilder().addComponents(select)]
     });
@@ -254,14 +294,35 @@ function createModmail({ client, guild, api, logger = console }) {
     if (!hasTeamAccess(message.member, ticket, message.channel)) return message.reply("You are not part of the support team assigned to this ticket.");
     if (!ticket.claimedByDiscordId) return message.reply("Claim this ticket before replying to the user.");
     if (ticket.claimedByDiscordId !== message.author.id) return message.reply(`This ticket is claimed by **${ticket.claimedByName || "another staff member"}**.`);
-    const user = await client.users.fetch(ticket.discordUserId);
     const attachments = attachmentList([...message.attachments.values()]);
-    const links = attachments.map(item => item.url).join("\n");
-    await user.send({
-      content: [`**Unity Airlines Support · ${message.author.displayName || message.author.username}**`, message.content || "", links].filter(Boolean).join("\n").slice(0, 2000)
-    });
+    await sendStaffReply(ticket, message.member, message.author, message.content || "", attachments);
     await api.saveMessage(ticket.id, messagePayload(message, "Staff to User"));
     await message.react("✅").catch(() => null);
+  }
+
+  async function sendStaffReply(ticket, member, actor, content, attachments = []) {
+    await getConfig();
+    const staffName = member?.displayName || actor.globalName || actor.username;
+    const rank = staffRank(member);
+    const values = ticketTemplateValues(ticket, {
+      "staff name": staffName,
+      "staff rank": rank,
+      message: content || "*Attachment only*"
+    });
+    const embed = new EmbedBuilder()
+      .setColor(BRAND_GREEN)
+      .setAuthor({ name: staffName, iconURL: actor.displayAvatarURL?.() })
+      .setTitle(renderTemplate(cachedConfig.settings?.staffReplyTitle, values, "Unity Airlines Support"))
+      .setDescription(renderTemplate(cachedConfig.settings?.staffReplyMessage, values, "[message]").slice(0, 4096))
+      .addFields(
+        { name: "Staff member", value: staffName.slice(0, 1024), inline: true },
+        { name: "Rank", value: rank.slice(0, 1024), inline: true }
+      )
+      .setFooter({ text: `Unity Airlines Support · Ticket #${ticket.ticketNumber}` })
+      .setTimestamp();
+    if (attachments.length) embed.addFields({ name: "Attachments", value: attachments.map(item => `[${item.name}](${item.url})`).join("\n").slice(0, 1024) });
+    const user = await client.users.fetch(ticket.discordUserId);
+    await user.send({ embeds: [embed] });
   }
 
   async function claimTicket(ticket, actor, accessChannel = null) {
@@ -302,8 +363,8 @@ function createModmail({ client, guild, api, logger = console }) {
     const preset = (cachedConfig.presets || []).find(item => item.id === presetId && (!item.teamId || item.teamId === ticket.teamId));
     if (!preset) throw new Error("That preset is no longer available for this support team.");
     if (ticket.claimedByDiscordId !== actor.id) throw new Error("Claim this ticket before sending a preset reply.");
-    const user = await client.users.fetch(ticket.discordUserId);
-    await user.send(`**Unity Airlines Support · ${actor.tag || actor.username}**\n${preset.message}`);
+    const member = await guild.members.fetch(actor.id).catch(() => null);
+    await sendStaffReply(ticket, member, actor, preset.message);
     await api.saveMessage(ticket.id, { direction: "Staff to User", authorDiscordId: actor.id, authorName: actor.tag || actor.username, content: preset.message });
     const channel = await ensureChannel(ticket);
     await channel.send(`📨 **${actor.tag || actor.username}** sent preset **${preset.label}**:\n${preset.message}`);
@@ -324,14 +385,13 @@ function createModmail({ client, guild, api, logger = console }) {
     const config = await getConfig();
     const user = await client.users.fetch(delayed.discordUserId).catch(() => null);
     if (user) {
-      const message = config.settings?.closeDelayMessage || "We have not heard from you. This ticket will automatically close in six hours unless you reply.";
+      const values = ticketTemplateValues(delayed, { "close time": `<t:${closeAt}:F>` });
       await user.send({
         embeds: [new EmbedBuilder()
-          .setColor(0xf59e0b)
-          .setTitle("Your support ticket will close soon")
-          .setDescription(message)
+          .setColor(BRAND_GREEN)
+          .setTitle(renderTemplate(config.settings?.closeDelayTitle, values, "Your support ticket will close soon"))
+          .setDescription(renderTemplate(config.settings?.closeDelayMessage, values, "We have not heard from you. This ticket will automatically close in six hours unless you reply."))
           .addFields({ name: "Automatic closure", value: `<t:${closeAt}:F>`, inline: true })
-          .setThumbnail(SUPPORT_EMOJI_URL)
           .setFooter({ text: "Reply in this direct message to keep the ticket open." })]
       }).catch(() => null);
     }
@@ -371,7 +431,16 @@ function createModmail({ client, guild, api, logger = console }) {
     await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: actor.id, authorName: actor.tag || actor.username || "Hub staff", content: `Ticket closed. Reason: ${reason}` });
     const config = await getConfig();
     const user = await client.users.fetch(ticket.discordUserId).catch(() => null);
-    if (user) await user.send(`${config.settings?.closedMessage || "Your Unity Airlines support ticket has been closed."}\n**Reason:** ${reason}`).catch(() => null);
+    if (user) {
+      const values = ticketTemplateValues(ticket, { reason });
+      await user.send({ embeds: [new EmbedBuilder()
+        .setColor(BRAND_GREEN)
+        .setTitle(renderTemplate(config.settings?.closedTitle, values, "Your support ticket has been closed"))
+        .setDescription(renderTemplate(config.settings?.closedMessage, values, "Your Unity Airlines support ticket has been closed."))
+        .addFields({ name: "Reason", value: reason.slice(0, 1024) })
+        .setFooter({ text: "Unity Airlines Support" })
+        .setTimestamp()] }).catch(() => null);
+    }
     const transcript = await api.transcript(ticket.id);
     const text = transcriptText(transcript.ticket, transcript.messages);
     const logChannelId = config.settings?.logChannelId;
@@ -379,7 +448,7 @@ function createModmail({ client, guild, api, logger = console }) {
     if (logChannel?.isTextBased()) {
       const file = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: `modmail-${ticket.ticketNumber}.txt` });
       const embed = new EmbedBuilder()
-        .setColor(0x64748b)
+        .setColor(BRAND_GREEN)
         .setTitle(`Closed modmail #${ticket.ticketNumber}`)
         .addFields(
           { name: "User", value: `${ticket.discordUsername} (${ticket.discordUserId})` },
@@ -502,7 +571,7 @@ function createModmail({ client, guild, api, logger = console }) {
       } else if (subcommand === "user") {
         const team = teamById(ticket.teamId);
         const embed = new EmbedBuilder()
-          .setColor(0x22a87a)
+          .setColor(BRAND_GREEN)
           .setTitle(`Customer · Modmail #${ticket.ticketNumber}`)
           .addFields(
             { name: "Discord", value: `${ticket.discordUsername}\n<@${ticket.discordUserId}>\n\`${ticket.discordUserId}\`` },
