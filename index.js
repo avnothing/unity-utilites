@@ -72,6 +72,7 @@ async function registerCommands() {
       .addSubcommand(command => command.setName("claim").setDescription("Claim the ticket in this channel"))
       .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
         .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setMaxLength(500)))
+      .addSubcommand(command => command.setName("close-delay").setDescription("Close in six hours unless the customer replies"))
       .addSubcommand(command => command.setName("transfer").setDescription("Transfer this ticket to another support team")
         .addStringOption(option => option.setName("team").setDescription("New support team").setRequired(true).setAutocomplete(true)))
       .addSubcommand(command => command.setName("add").setDescription("Add another staff member to this ticket")
@@ -238,6 +239,9 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 client.on(Events.GuildMemberAdd, member => {
   if (member.guild.id === config.guildId) roleSync?.syncMember(member).catch(error => console.warn(`New-member role sync failed: ${error.message}`));
+});
+client.on(Events.GuildMemberRemove, member => {
+  if (member.guild.id === config.guildId) modmail?.closeForMemberLeave(member).catch(error => console.warn(`Automatic ticket close failed: ${error.message}`));
 });
 for (const event of [Events.GuildRoleCreate, Events.GuildRoleUpdate, Events.GuildRoleDelete, Events.ChannelCreate, Events.ChannelUpdate, Events.ChannelDelete]) {
   client.on(event, () => {

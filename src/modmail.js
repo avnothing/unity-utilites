@@ -172,6 +172,13 @@ function createModmail({ client, guild, api, logger = console }) {
       .setTimestamp();
   }
 
+  function customerTicketControls(ticket) {
+    if (!cachedConfig.settings?.allowCustomerClose) return [];
+    return [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`${PREFIX}:user-close:${ticket.id}`).setLabel("Close this ticket").setStyle(ButtonStyle.Danger)
+    )];
+  }
+
   async function sendUserMessageToStaff(ticket, message) {
     const channel = await ensureChannel(ticket);
     const attachments = attachmentList([...message.attachments.values()]);
@@ -194,7 +201,7 @@ function createModmail({ client, guild, api, logger = console }) {
     });
     const ticket = created.ticket;
     await sendUserMessageToStaff(ticket, message);
-    if (notify) await message.author.send({ embeds: [ticketOpenedEmbed(ticket)] });
+    if (notify) await message.author.send({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
     return ticket;
   }
 
@@ -227,7 +234,10 @@ function createModmail({ client, guild, api, logger = console }) {
   async function handleDirectMessage(message) {
     await message.react(SUPPORT_EMOJI_ID).catch(() => message.react("📩").catch(() => null));
     const existing = await api.openTicket(message.author.id);
-    if (existing.ticket) return sendUserMessageToStaff(existing.ticket, message);
+    if (existing.ticket) {
+      const ticket = await cancelCloseDelayForCustomerReply(existing.ticket, message.author);
+      return sendUserMessageToStaff(ticket, message);
+    }
     if (pendingMessages.has(message.author.id)) {
       pendingMessages.set(message.author.id, message);
       return;
@@ -299,6 +309,58 @@ function createModmail({ client, guild, api, logger = console }) {
     await channel.send(`📨 **${actor.tag || actor.username}** sent preset **${preset.label}**:\n${preset.message}`);
   }
 
+  function closeDelayTimestamp(ticket) {
+    return Math.floor(new Date(ticket.closeDelayAt).getTime() / 1000);
+  }
+
+  async function startCloseDelay(ticket, actor) {
+    const result = await api.updateTicket(ticket.id, {
+      action: "close-delay",
+      discordActorId: actor.id,
+      actorName: actor.tag || actor.username || "Staff"
+    });
+    const delayed = result.ticket;
+    const closeAt = closeDelayTimestamp(delayed);
+    const config = await getConfig();
+    const user = await client.users.fetch(delayed.discordUserId).catch(() => null);
+    if (user) {
+      const message = config.settings?.closeDelayMessage || "We have not heard from you. This ticket will automatically close in six hours unless you reply.";
+      await user.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0xf59e0b)
+          .setTitle("Your support ticket will close soon")
+          .setDescription(message)
+          .addFields({ name: "Automatic closure", value: `<t:${closeAt}:F>`, inline: true })
+          .setThumbnail(SUPPORT_EMOJI_URL)
+          .setFooter({ text: "Reply in this direct message to keep the ticket open." })]
+      }).catch(() => null);
+    }
+    const channel = await ensureChannel(delayed);
+    await channel.send(`⏳ <@${actor.id}> started a close delay. This ticket will close <t:${closeAt}:F> unless the customer replies.`);
+    await api.saveMessage(delayed.id, {
+      direction: "System",
+      authorDiscordId: actor.id,
+      authorName: actor.tag || actor.username || "Staff",
+      content: `Close delay started; automatic closure is scheduled for ${delayed.closeDelayAt}.`
+    });
+    return delayed;
+  }
+
+  async function cancelCloseDelayForCustomerReply(ticket, user) {
+    if (!ticket.closeDelayAt) return ticket;
+    const result = await api.updateTicket(ticket.id, { action: "cancel-close-delay" });
+    const active = result.ticket;
+    const channel = await ensureChannel(active);
+    await channel.send("↩️ The customer replied, so the scheduled close was cancelled.");
+    await api.saveMessage(active.id, {
+      direction: "System",
+      authorDiscordId: user.id,
+      authorName: user.tag || user.username || "Customer",
+      content: "Close delay cancelled because the customer replied."
+    });
+    return active;
+  }
+
   async function closeTicket(ticket, actor, reason = "Closed") {
     const result = await api.updateTicket(ticket.id, {
       action: "close",
@@ -339,6 +401,17 @@ function createModmail({ client, guild, api, logger = console }) {
       closeTimers.set(ticket.id, timer);
     }
     return result.ticket;
+  }
+
+  async function closeForMemberLeave(member) {
+    const { ticket } = await api.openTicket(member.id);
+    if (!ticket) return false;
+    await closeTicket(ticket, {
+      id: client.user.id,
+      tag: client.user.tag,
+      username: client.user.username
+    }, "Closed automatically because the customer left the main server.");
+    return true;
   }
 
   async function reopenTicket(ticket, actor) {
@@ -406,6 +479,9 @@ function createModmail({ client, guild, api, logger = console }) {
         const reason = interaction.options.getString("reason") || "Closed with /ticket close";
         await closeTicket(ticket, interaction.user, reason);
         await interaction.editReply("Ticket closed and its transcript was logged.");
+      } else if (subcommand === "close-delay") {
+        const delayed = await startCloseDelay(ticket, interaction.user);
+        await interaction.editReply(`Modmail #${delayed.ticketNumber} will close <t:${closeDelayTimestamp(delayed)}:R> unless the customer replies.`);
       } else if (subcommand === "transfer") {
         const moved = await transferTicket(ticket, interaction.options.getString("team", true), interaction.user);
         await interaction.editReply(`Modmail #${moved.ticketNumber} was transferred and is now unclaimed.`);
@@ -477,7 +553,18 @@ function createModmail({ client, guild, api, logger = console }) {
         if (!message) throw new Error("That request expired. Send the bot a new direct message to try again.");
         pendingMessages.delete(interaction.user.id);
         const ticket = await openForMessage(message, interaction.values[0], { notify: false });
-        await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: [] });
+        await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
+        return true;
+      }
+      if (action === "user-close" && interaction.isButton()) {
+        await getConfig();
+        if (!cachedConfig.settings?.allowCustomerClose) throw new Error("Customer ticket closing is disabled.");
+        const { ticket } = await api.transcript(target);
+        if (!ticket || ticket.status !== "Open") throw new Error("This ticket is already closed.");
+        if (interaction.user.id !== ticket.discordUserId) throw new Error("Only the customer who opened this ticket can close it.");
+        await interaction.deferUpdate();
+        await closeTicket(ticket, interaction.user, "Closed by the customer.");
+        await interaction.editReply({ content: "Your ticket has been closed.", embeds: [], components: [] });
         return true;
       }
       if (action === "close" && interaction.isButton()) {
@@ -540,6 +627,14 @@ function createModmail({ client, guild, api, logger = console }) {
     if (pollingActions) return;
     pollingActions = true;
     try {
+      const { tickets: dueCloseDelays = [] } = await api.dueCloseDelays();
+      for (const ticket of dueCloseDelays) {
+        await closeTicket(ticket, {
+          id: client.user.id,
+          tag: client.user.tag,
+          username: client.user.username
+        }, "Automatically closed after six hours without a customer reply.").catch(error => logger.warn(`Could not apply close delay for #${ticket.ticketNumber}: ${error.message}`));
+      }
       const { actions = [] } = await api.pendingActions();
       for (const action of actions) {
         try {
@@ -548,6 +643,7 @@ function createModmail({ client, guild, api, logger = console }) {
           if (action.action === "claim") await claimTicket(ticket, actor);
           else if (action.action === "transfer") await transferTicket(ticket, action.payload?.teamId, actor);
           else if (action.action === "close") await closeTicket(ticket, actor, action.payload?.reason || "Closed from the Hub");
+          else if (action.action === "close-delay") await startCloseDelay(ticket, actor);
           else if (action.action === "reopen") await reopenTicket(ticket, actor);
           else throw new Error("Unknown dashboard action.");
           await api.completeAction(action.id, "Completed", "Applied by the main-server bot.");
@@ -562,7 +658,7 @@ function createModmail({ client, guild, api, logger = console }) {
     }
   }
 
-  return { closeTicket, getConfig, handleAutocomplete, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
+  return { closeForMemberLeave, closeTicket, getConfig, handleAutocomplete, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
 }
 
 module.exports = { createModmail, messagePayload, safeChannelName, transcriptText };

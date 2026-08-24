@@ -71,15 +71,16 @@ test("registers the utilities command suite and clears obsolete global commands"
   assert.doesNotMatch(index, /setName\("log_flight"\)/);
 });
 
-test("ticket commands include reopen, transcripts, transfers and staff access", () => {
+test("ticket commands include reopen, close delays, transcripts, transfers and staff access", () => {
   const index = read("index.js");
   const modmail = read("src/modmail.js");
-  for (const subcommand of ["claim", "close", "transfer", "add", "user", "transcript", "reopen"]) {
+  for (const subcommand of ["claim", "close", "close-delay", "transfer", "add", "user", "transcript", "reopen"]) {
     assert.match(index, new RegExp(`setName\\(\\"${subcommand}\\"\\)`));
   }
   assert.match(modmail, /async function reopenTicket/);
   assert.match(modmail, /permissionOverwrites\.edit/);
   assert.match(modmail, /transcriptText/);
+  assert.match(modmail, /async function startCloseDelay/);
 });
 
 test("runs cached role reconciliation every twenty seconds", () => {
@@ -104,4 +105,15 @@ test("uses the Unity Airlines support emoji for ticket intake", () => {
   assert.match(modmail, /SUPPORT_EMOJI_ID = "1532706319889600672"/);
   assert.match(modmail, /message\.react\(SUPPORT_EMOJI_ID\)/);
   assert.match(modmail, /emoji: team\.emoji \|\| \{ id: SUPPORT_EMOJI_ID \}/);
+});
+
+test("ticket lifecycle closes departed members and lets configured customers cancel their own ticket", () => {
+  const index = read("index.js");
+  const modmail = read("src/modmail.js");
+  assert.match(index, /Events\.GuildMemberRemove/);
+  assert.match(modmail, /async function closeForMemberLeave/);
+  assert.match(modmail, /allowCustomerClose/);
+  assert.match(modmail, /user-close/);
+  assert.match(modmail, /cancelCloseDelayForCustomerReply/);
+  assert.match(modmail, /dueCloseDelays/);
 });
