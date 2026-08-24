@@ -214,6 +214,10 @@ function createModmail({ client, guild, api, logger = console }) {
       .setColor(BRAND_GREEN)
       .setTitle(renderTemplate(cachedConfig.settings?.ticketOpenedTitle, values, "Support ticket #[ticket number] opened"))
       .setDescription(renderTemplate(cachedConfig.settings?.ticketOpenedMessage, values, "Your message has been sent to **[ticket type]**. Reply in this direct message at any time to continue the conversation."))
+      .addFields({
+        name: "While you wait",
+        value: "A member of the support team will answer your ticket soon. Please check our [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749) and [Careers information](https://discord.com/channels/1532393442590851313/1532415361960509651)."
+      })
       .setFooter({ text: "Unity Airlines Support" })
       .setTimestamp();
   }

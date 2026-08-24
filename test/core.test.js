@@ -139,4 +139,7 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.doesNotMatch(modmail, /name: "Rank"/);
   assert.doesNotMatch(modmail, /Open · waiting for a staff member/);
   assert.match(modmail, /Ticket closure cancelled/);
+  assert.match(modmail, /A member of the support team will answer your ticket soon/);
+  assert.match(modmail, /1532410732874825749/);
+  assert.match(modmail, /1532415361960509651/);
 });
