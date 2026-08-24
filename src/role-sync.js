@@ -35,13 +35,15 @@ function createRoleSync({ guild, api, logger = console }) {
     return reconcileMemberRoles(member, target);
   }
 
-  async function syncAll() {
+  async function syncAll({ refreshMembers = false } = {}) {
     if (running) return { skipped: true };
     running = true;
     try {
       const payload = await api.roleSyncAll();
       const linked = new Map((payload.members || []).map(item => [String(item.discordUserId), item]));
-      const members = await guild.members.fetch();
+      const members = refreshMembers || !guild.members.cache.size
+        ? await guild.members.fetch()
+        : guild.members.cache;
       let changed = 0;
       let failures = 0;
       for (const member of members.values()) {

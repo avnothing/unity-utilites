@@ -81,3 +81,11 @@ test("ticket commands include reopen, transcripts, transfers and staff access", 
   assert.match(modmail, /permissionOverwrites\.edit/);
   assert.match(modmail, /transcriptText/);
 });
+
+test("runs cached role reconciliation every twenty seconds", () => {
+  const index = read("index.js");
+  const roleSync = read("src/role-sync.js");
+  assert.match(index, /20_000, "Role sync failed"/);
+  assert.match(index, /syncAll\(\{ refreshMembers: true \}\)/);
+  assert.match(roleSync, /refreshMembers \|\| !guild\.members\.cache\.size/);
+});

@@ -6,7 +6,7 @@ Main-server Discord bot for Unity Airlines. It synchronises mapped staff roles f
 
 - Staff-server to main-server role mapping through the Hub
 - Customer-role fallback for members without a mapped staff role
-- Five-minute full reconciliation plus instant new-member sync
+- Twenty-second cached reconciliation plus a full startup scan and instant new-member sync
 - DM modmail with support-team selection
 - Private ticket channels, claiming, transfer, close reasons and preset replies
 - Persistent messages, ticket history and dashboard controls on the website

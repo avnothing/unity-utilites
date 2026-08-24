@@ -121,7 +121,7 @@ async function handleRoleSyncCommand(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "run") {
-    const result = await roleSync.syncAll();
+    const result = await roleSync.syncAll({ refreshMembers: true });
     state.lastRoleSyncAt = new Date().toISOString();
     return interaction.editReply(`Role sync complete: ${result.checked || 0} members checked, ${result.changed || 0} changed and ${result.failures || 0} failed.`);
   }
@@ -195,12 +195,12 @@ client.once(Events.ClientReady, async readyClient => {
     await Promise.all([registerCommands(), publishCatalogue(), modmail.getConfig(true)]);
     state.ready = true;
     console.log(`Unity utilities bot ready as ${readyClient.user.tag} in ${state.guild.name}.`);
-    roleSync.syncAll().then(() => { state.lastRoleSyncAt = new Date().toISOString(); }).catch(error => console.error(`Initial role sync failed: ${error.message}`));
+    roleSync.syncAll({ refreshMembers: true }).then(() => { state.lastRoleSyncAt = new Date().toISOString(); }).catch(error => console.error(`Initial role sync failed: ${error.message}`));
     catalogueTimer = safeInterval(publishCatalogue, 5 * 60_000, "Catalogue refresh failed");
     roleTimer = safeInterval(async () => {
       await roleSync.syncAll();
       state.lastRoleSyncAt = new Date().toISOString();
-    }, 5 * 60_000, "Role sync failed");
+    }, 20_000, "Role sync failed");
     actionTimer = safeInterval(() => modmail.processPendingActions(), 10_000, "Modmail action poll failed");
   } catch (error) {
     console.error(`Bot startup failed: ${error.stack || error.message}`);
