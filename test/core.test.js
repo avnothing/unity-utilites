@@ -1,8 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { loadConfig } = require("../src/config");
 const { roleChanges } = require("../src/role-sync");
 const { safeChannelName, transcriptText } = require("../src/modmail");
+const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 
 test("loads the required Railway and Discord configuration", () => {
   const config = loadConfig({
@@ -56,4 +59,25 @@ test("transcripts include direction, content and attachments in London time", ()
   assert.match(text, /Help please/);
   assert.match(text, /proof\.png/);
   assert.match(text, /Resolved/);
+});
+
+test("registers the utilities command suite and clears obsolete global commands", () => {
+  const index = read("index.js");
+  for (const command of ["ticket", "role-sync", "dashboard", "support-panel", "utilities-status"]) {
+    assert.match(index, new RegExp(`setName\\(\\"${command}\\"\\)`));
+  }
+  assert.match(index, /Routes\.applicationCommands\(config\.clientId\).*body: \[\]/s);
+  assert.doesNotMatch(index, /setName\("change_flights"\)/);
+  assert.doesNotMatch(index, /setName\("log_flight"\)/);
+});
+
+test("ticket commands include reopen, transcripts, transfers and staff access", () => {
+  const index = read("index.js");
+  const modmail = read("src/modmail.js");
+  for (const subcommand of ["claim", "close", "transfer", "add", "user", "transcript", "reopen"]) {
+    assert.match(index, new RegExp(`setName\\(\\"${subcommand}\\"\\)`));
+  }
+  assert.match(modmail, /async function reopenTicket/);
+  assert.match(modmail, /permissionOverwrites\.edit/);
+  assert.match(modmail, /transcriptText/);
 });

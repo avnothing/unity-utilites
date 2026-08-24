@@ -29,6 +29,7 @@ function createHubApi({ portalUrl, botApiSecret }) {
     roleSyncMember: discordId => request(`/api/bot/main/role-sync/${encodeURIComponent(discordId)}`),
     openTicket: discordId => request(`/api/bot/main/tickets/open/${encodeURIComponent(discordId)}`),
     channelTicket: channelId => request(`/api/bot/main/tickets/channel/${encodeURIComponent(channelId)}`),
+    ticketByNumber: ticketNumber => request(`/api/bot/main/tickets/number/${encodeURIComponent(ticketNumber)}`),
     createTicket: payload => request("/api/bot/main/tickets", { method: "POST", body: payload }),
     updateTicket: (ticketId, payload) => request(`/api/bot/main/tickets/${encodeURIComponent(ticketId)}`, { method: "PATCH", body: payload }),
     saveMessage: (ticketId, payload) => request(`/api/bot/main/tickets/${encodeURIComponent(ticketId)}/messages`, { method: "POST", body: payload }),

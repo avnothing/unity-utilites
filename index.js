@@ -1,10 +1,15 @@
 const http = require("node:http");
 const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
+  EmbedBuilder,
   Events,
   GatewayIntentBits,
   Partials,
+  PermissionFlagsBits,
   REST,
   Routes,
   SlashCommandBuilder
@@ -56,11 +61,121 @@ async function publishCatalogue() {
 }
 
 async function registerCommands() {
-  const command = new SlashCommandBuilder()
-    .setName("support")
-    .setDescription("Learn how to open a private Unity Airlines support ticket");
+  const commands = [
+    new SlashCommandBuilder()
+      .setName("support")
+      .setDescription("Learn how to open a private Unity Airlines support ticket"),
+    new SlashCommandBuilder()
+      .setName("ticket")
+      .setDescription("Manage Unity Airlines modmail tickets")
+      .setDMPermission(false)
+      .addSubcommand(command => command.setName("claim").setDescription("Claim the ticket in this channel"))
+      .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
+        .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setMaxLength(500)))
+      .addSubcommand(command => command.setName("transfer").setDescription("Transfer this ticket to another support team")
+        .addStringOption(option => option.setName("team").setDescription("New support team").setRequired(true).setAutocomplete(true)))
+      .addSubcommand(command => command.setName("add").setDescription("Add another staff member to this ticket")
+        .addUserOption(option => option.setName("staff_member").setDescription("Staff member to add").setRequired(true)))
+      .addSubcommand(command => command.setName("user").setDescription("Show the customer and routing information for this ticket"))
+      .addSubcommand(command => command.setName("transcript").setDescription("Generate the current ticket transcript"))
+      .addSubcommand(command => command.setName("reopen").setDescription("Reopen a closed ticket by its number")
+        .addIntegerOption(option => option.setName("ticket_number").setDescription("Ticket number shown in the dashboard or log").setRequired(true).setMinValue(1))),
+    new SlashCommandBuilder()
+      .setName("role-sync")
+      .setDescription("Control staff role synchronisation")
+      .setDMPermission(false)
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+      .addSubcommand(command => command.setName("run").setDescription("Run a full staff and Customer role sync now"))
+      .addSubcommand(command => command.setName("member").setDescription("Synchronise one member now")
+        .addUserOption(option => option.setName("member").setDescription("Main-server member to synchronise").setRequired(true)))
+      .addSubcommand(command => command.setName("status").setDescription("Show role-sync configuration and last-run status")),
+    new SlashCommandBuilder()
+      .setName("dashboard")
+      .setDescription("Open the Unity Airlines modmail dashboard")
+      .setDMPermission(false)
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+    new SlashCommandBuilder()
+      .setName("support-panel")
+      .setDescription("Post the main-server support panel")
+      .setDMPermission(false)
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+      .addChannelOption(option => option.setName("channel").setDescription("Channel for the panel; defaults to this channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)),
+    new SlashCommandBuilder()
+      .setName("utilities-status")
+      .setDescription("Show the utilities bot, Hub, modmail and role-sync status")
+      .setDMPermission(false)
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  ];
   const rest = new REST({ version: "10" }).setToken(config.token);
-  await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: [command.toJSON()] });
+  await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
+  await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands.map(command => command.toJSON()) });
+  console.log(`Cleared old global commands and registered ${commands.length} main-server command groups.`);
+}
+
+function discordTimestamp(value) {
+  if (!value) return "Not run yet";
+  return `<t:${Math.floor(new Date(value).getTime() / 1000)}:R>`;
+}
+
+async function handleRoleSyncCommand(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "run") {
+    const result = await roleSync.syncAll();
+    state.lastRoleSyncAt = new Date().toISOString();
+    return interaction.editReply(`Role sync complete: ${result.checked || 0} members checked, ${result.changed || 0} changed and ${result.failures || 0} failed.`);
+  }
+  if (subcommand === "member") {
+    const user = interaction.options.getUser("member", true);
+    const member = await state.guild.members.fetch(user.id).catch(() => null);
+    if (!member) return interaction.editReply("That user is not a member of the main server.");
+    const result = await roleSync.syncMember(member);
+    state.lastRoleSyncAt = new Date().toISOString();
+    return interaction.editReply(`Synchronised ${member.user.tag}: ${result.added.length} role(s) added, ${result.removed.length} removed${result.skipped.length ? ` and ${result.skipped.length} skipped because the bot cannot manage them` : ""}.`);
+  }
+  const payload = await api.roleSyncAll();
+  return interaction.editReply([
+    `**Last sync:** ${discordTimestamp(state.lastRoleSyncAt)}`,
+    `**Linked Hub accounts:** ${payload.members?.length || 0}`,
+    `**Managed main-server roles:** ${payload.managedRoleIds?.length || 0}`,
+    `**Customer fallback configured:** ${payload.fallbackRoleIds?.length ? "Yes" : "No"}`
+  ].join("\n"));
+}
+
+async function handleSupportPanelCommand(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const channel = interaction.options.getChannel("channel") || interaction.channel;
+  if (!channel?.isTextBased()) return interaction.editReply("Choose a text channel for the support panel.");
+  const embed = new EmbedBuilder()
+    .setColor(0x22a87a)
+    .setTitle("Unity Airlines Support")
+    .setDescription("Need help from our team? Open a private conversation by messaging Unity Utilities. You will be asked to choose the support team that can best help you.")
+    .addFields({ name: "Private and secure", value: "Your messages are relayed to a private support channel and recorded in the ticket transcript." })
+    .setFooter({ text: "Please do not open duplicate tickets." });
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Open support").setURL(`https://discord.com/users/${client.user.id}`),
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Unity Airlines Hub").setURL(config.portalUrl)
+  );
+  await channel.send({ embeds: [embed], components: [buttons] });
+  return interaction.editReply(`Support panel posted in ${channel}.`);
+}
+
+async function handleUtilitiesStatus(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  const hub = await modmail.getConfig(true);
+  const embed = new EmbedBuilder()
+    .setColor(state.ready ? 0x22a87a : 0xef4444)
+    .setTitle("Unity Utilities status")
+    .addFields(
+      { name: "Discord", value: state.ready ? `Online · ${Math.round(client.ws.ping)} ms` : "Starting", inline: true },
+      { name: "Hub bridge", value: hub.settings?.mainGuildId === state.guild.id ? "Connected" : "Configuration required", inline: true },
+      { name: "Support teams", value: String(hub.teams?.length || 0), inline: true },
+      { name: "Preset replies", value: String(hub.presets?.length || 0), inline: true },
+      { name: "Last role sync", value: discordTimestamp(state.lastRoleSyncAt), inline: true },
+      { name: "Last catalogue update", value: discordTimestamp(state.lastCatalogueAt), inline: true }
+    )
+    .setTimestamp();
+  return interaction.editReply({ embeds: [embed] });
 }
 
 function safeInterval(fn, milliseconds, label) {
@@ -96,9 +211,29 @@ client.once(Events.ClientReady, async readyClient => {
 
 client.on(Events.MessageCreate, message => modmail?.handleMessage(message));
 client.on(Events.InteractionCreate, async interaction => {
-  if (await modmail?.handleInteraction(interaction)) return;
-  if (interaction.isChatInputCommand() && interaction.commandName === "support") {
-    await interaction.reply({ content: "Direct-message this bot to open a private Unity Airlines support ticket. You will be asked to choose the right support team.", ephemeral: true });
+  try {
+    if (interaction.isAutocomplete() && await modmail?.handleAutocomplete(interaction)) return;
+    if (await modmail?.handleInteraction(interaction)) return;
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName === "support") {
+      await interaction.reply({ content: `Direct-message <@${client.user.id}> to open a private Unity Airlines support ticket. You will be asked to choose the right support team.`, ephemeral: true });
+    } else if (interaction.commandName === "ticket") {
+      await modmail.handleTicketCommand(interaction);
+    } else if (interaction.commandName === "role-sync") {
+      await handleRoleSyncCommand(interaction);
+    } else if (interaction.commandName === "dashboard") {
+      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Open Modmail Dashboard").setURL(`${config.portalUrl}/portal.html?page=modmail`));
+      await interaction.reply({ content: "Open the private Unity Airlines Hub dashboard:", components: [row], ephemeral: true });
+    } else if (interaction.commandName === "support-panel") {
+      await handleSupportPanelCommand(interaction);
+    } else if (interaction.commandName === "utilities-status") {
+      await handleUtilitiesStatus(interaction);
+    }
+  } catch (error) {
+    console.error(`Command failed: ${error.stack || error.message}`);
+    const payload = { content: error.message || "That command could not be completed.", ephemeral: true };
+    if (interaction.deferred || interaction.replied) await interaction.editReply(payload).catch(() => null);
+    else await interaction.reply(payload).catch(() => null);
   }
 });
 client.on(Events.GuildMemberAdd, member => {

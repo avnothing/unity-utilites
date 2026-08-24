@@ -13,6 +13,17 @@ Main-server Discord bot for Unity Airlines. It synchronises mapped staff roles f
 - Transcript files posted to a private Discord log channel
 - `/support` guidance command and Railway health endpoint
 
+## Commands
+
+- `/support` — tells a customer how to start a private DM ticket.
+- `/ticket claim|close|transfer|add|user|transcript|reopen` — complete ticket control for support staff.
+- `/role-sync run|member|status` — manually run or inspect cross-server role synchronisation.
+- `/dashboard` — opens the private Hub modmail dashboard.
+- `/support-panel` — posts the customer-facing support panel in a chosen channel.
+- `/utilities-status` — checks Discord, Hub, support-team and sync health.
+
+Ticket and utilities commands are permission-gated in Discord. At startup the bot clears the application's obsolete global commands, including the old flight commands, and registers this command set directly in the main server so updates appear immediately.
+
 The role sync only manages roles selected in the Hub mapping. It never copies arbitrary permissions or grants the main server's staff roles by matching names.
 
 ## Discord application setup

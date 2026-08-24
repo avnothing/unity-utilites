@@ -91,6 +91,7 @@ function createModmail({ client, guild, api, logger = console }) {
   let configLoadedAt = 0;
   let pollingActions = false;
   const pendingMessages = new Map();
+  const closeTimers = new Map();
 
   async function getConfig(force = false) {
     if (force || Date.now() - configLoadedAt > 60_000) {
@@ -104,11 +105,16 @@ function createModmail({ client, guild, api, logger = console }) {
     return (cachedConfig.teams || []).find(team => team.id === teamId) || null;
   }
 
-  function hasTeamAccess(member, ticket) {
+  function hasTeamAccess(member, ticket, channel = null) {
     if (!member) return false;
     if (member.permissions.has(PermissionFlagsBits.Administrator) || member.permissions.has(PermissionFlagsBits.ManageMessages)) return true;
     const team = teamById(ticket.teamId);
-    return Boolean(team && (team.staffRoleIds || []).some(roleId => member.roles.cache.has(roleId)));
+    if (team && (team.staffRoleIds || []).some(roleId => member.roles.cache.has(roleId))) return true;
+    return Boolean(
+      channel &&
+      channel.permissionOverwrites?.cache?.has(member.id) &&
+      channel.permissionsFor(member)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])
+    );
   }
 
   function permissionOverwrites(team) {
@@ -215,7 +221,7 @@ function createModmail({ client, guild, api, logger = console }) {
     const ticket = result.ticket;
     if (!ticket) return;
     await getConfig();
-    if (!hasTeamAccess(message.member, ticket)) return message.reply("You are not part of the support team assigned to this ticket.");
+    if (!hasTeamAccess(message.member, ticket, message.channel)) return message.reply("You are not part of the support team assigned to this ticket.");
     if (!ticket.claimedByDiscordId) return message.reply("Claim this ticket before replying to the user.");
     if (ticket.claimedByDiscordId !== message.author.id) return message.reply(`This ticket is claimed by **${ticket.claimedByName || "another staff member"}**.`);
     const user = await client.users.fetch(ticket.discordUserId);
@@ -228,17 +234,17 @@ function createModmail({ client, guild, api, logger = console }) {
     await message.react("✅").catch(() => null);
   }
 
-  async function claimTicket(ticket, actor) {
+  async function claimTicket(ticket, actor, accessChannel = null) {
     const member = await guild.members.fetch(actor.id).catch(() => null);
     await getConfig();
-    if (!hasTeamAccess(member, ticket)) throw new Error("You are not part of the support team assigned to this ticket.");
+    if (!hasTeamAccess(member, ticket, accessChannel)) throw new Error("You are not part of the support team assigned to this ticket.");
     const result = await api.updateTicket(ticket.id, {
       action: "claim",
       discordActorId: actor.id,
       actorName: actor.tag || actor.username
     });
-    const channel = await ensureChannel(result.ticket);
-    await channel.send(`🔒 Ticket claimed by <@${actor.id}>.`);
+    const ticketChannel = await ensureChannel(result.ticket);
+    await ticketChannel.send(`🔒 Ticket claimed by <@${actor.id}>.`);
     await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: actor.id, authorName: actor.tag || actor.username, content: "Ticket claimed." });
     return result.ticket;
   }
@@ -305,9 +311,36 @@ function createModmail({ client, guild, api, logger = console }) {
     if (channel?.isTextBased()) {
       await channel.send(`🔒 Ticket closed by <@${actor.id}>. **Reason:** ${reason}`).catch(() => null);
       await channel.setName(`closed-${ticket.ticketNumber}`).catch(() => null);
-      const timer = setTimeout(() => channel.delete(`Modmail #${ticket.ticketNumber} closed`).catch(() => null), 10_000);
+      const timer = setTimeout(() => {
+        closeTimers.delete(ticket.id);
+        channel.delete(`Modmail #${ticket.ticketNumber} closed`).catch(() => null);
+      }, 10_000);
       timer.unref?.();
+      closeTimers.set(ticket.id, timer);
     }
+    return result.ticket;
+  }
+
+  async function reopenTicket(ticket, actor) {
+    const pendingDelete = closeTimers.get(ticket.id);
+    if (pendingDelete) clearTimeout(pendingDelete);
+    closeTimers.delete(ticket.id);
+    const result = await api.updateTicket(ticket.id, {
+      action: "reopen",
+      discordActorId: actor.id,
+      actorName: actor.tag || actor.username || "Hub staff"
+    });
+    const channel = await ensureChannel(result.ticket);
+    await channel.setName(safeChannelName(result.ticket)).catch(() => null);
+    await channel.send({ content: `🔓 Ticket reopened by <@${actor.id}>. It is unclaimed.`, components: [ticketControls(ticket.id)] });
+    await api.saveMessage(ticket.id, {
+      direction: "System",
+      authorDiscordId: actor.id,
+      authorName: actor.tag || actor.username || "Hub staff",
+      content: "Ticket reopened."
+    });
+    const user = await client.users.fetch(ticket.discordUserId).catch(() => null);
+    if (user) await user.send(`Your Unity Airlines support ticket **#${ticket.ticketNumber}** has been reopened. Reply here to continue.`).catch(() => null);
     return result.ticket;
   }
 
@@ -317,8 +350,100 @@ function createModmail({ client, guild, api, logger = console }) {
     if (!ticket || ticket.status !== "Open") throw new Error("This ticket is already closed.");
     const member = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
     await getConfig();
-    if (!hasTeamAccess(member, ticket)) throw new Error("You are not part of the support team assigned to this ticket.");
+    if (!hasTeamAccess(member, ticket, interaction.channel)) throw new Error("You are not part of the support team assigned to this ticket.");
     return ticket;
+  }
+
+  async function ticketForChannel(interaction) {
+    const { ticket } = await api.channelTicket(interaction.channelId);
+    if (!ticket) throw new Error("Use this command inside an open modmail ticket channel.");
+    await getConfig();
+    const member = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!hasTeamAccess(member, ticket, interaction.channel)) throw new Error("You are not part of the support team assigned to this ticket.");
+    return ticket;
+  }
+
+  async function handleTicketCommand(interaction) {
+    const subcommand = interaction.options.getSubcommand();
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      if (subcommand === "reopen") {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) throw new Error("You need Manage Messages to reopen tickets.");
+        const ticketNumber = interaction.options.getInteger("ticket_number", true);
+        const { ticket } = await api.ticketByNumber(ticketNumber);
+        if (!ticket) throw new Error(`Modmail #${ticketNumber} was not found.`);
+        if (ticket.status !== "Closed") throw new Error(`Modmail #${ticketNumber} is already open.`);
+        const reopened = await reopenTicket(ticket, interaction.user);
+        await interaction.editReply(`Modmail #${reopened.ticketNumber} was reopened and is unclaimed.`);
+        return true;
+      }
+
+      const ticket = await ticketForChannel(interaction);
+      if (subcommand === "claim") {
+        const claimed = await claimTicket(ticket, interaction.user, interaction.channel);
+        await interaction.editReply(`You claimed modmail #${claimed.ticketNumber}.`);
+      } else if (subcommand === "close") {
+        const reason = interaction.options.getString("reason") || "Closed with /ticket close";
+        await closeTicket(ticket, interaction.user, reason);
+        await interaction.editReply("Ticket closed and its transcript was logged.");
+      } else if (subcommand === "transfer") {
+        const moved = await transferTicket(ticket, interaction.options.getString("team", true), interaction.user);
+        await interaction.editReply(`Modmail #${moved.ticketNumber} was transferred and is now unclaimed.`);
+      } else if (subcommand === "add") {
+        const user = interaction.options.getUser("staff_member", true);
+        const member = await guild.members.fetch(user.id).catch(() => null);
+        if (!member || member.user.bot) throw new Error("Choose a non-bot member of this server.");
+        await interaction.channel.permissionOverwrites.edit(member.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+          EmbedLinks: true
+        }, { reason: `Added to modmail #${ticket.ticketNumber} by ${interaction.user.tag}` });
+        await interaction.channel.send(`➕ <@${member.id}> was added to this ticket by <@${interaction.user.id}>.`);
+        await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: interaction.user.id, authorName: interaction.user.tag, content: `${member.user.tag} was added to the ticket.` });
+        await interaction.editReply(`${member.user.tag} can now access this ticket.`);
+      } else if (subcommand === "user") {
+        const team = teamById(ticket.teamId);
+        const embed = new EmbedBuilder()
+          .setColor(0x22a87a)
+          .setTitle(`Customer · Modmail #${ticket.ticketNumber}`)
+          .addFields(
+            { name: "Discord", value: `${ticket.discordUsername}\n<@${ticket.discordUserId}>\n\`${ticket.discordUserId}\`` },
+            { name: "Support team", value: team?.name || "General", inline: true },
+            { name: "Claimed by", value: ticket.claimedByName || "Unclaimed", inline: true },
+            { name: "Opened", value: `<t:${Math.floor(new Date(ticket.openedAt).getTime() / 1000)}:F>` }
+          );
+        await interaction.editReply({ embeds: [embed] });
+      } else if (subcommand === "transcript") {
+        const detail = await api.transcript(ticket.id);
+        const text = transcriptText(detail.ticket, detail.messages);
+        if (Buffer.byteLength(text, "utf8") > 7_500_000) throw new Error("This transcript is too large for Discord. Download it from the Hub dashboard instead.");
+        const file = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: `modmail-${ticket.ticketNumber}.txt` });
+        await interaction.editReply({ content: `Transcript for modmail #${ticket.ticketNumber}:`, files: [file] });
+      }
+      return true;
+    } catch (error) {
+      logger.warn(`Ticket command failed: ${error.message}`);
+      await interaction.editReply(error.message).catch(() => null);
+      return true;
+    }
+  }
+
+  async function handleAutocomplete(interaction) {
+    if (!interaction.isAutocomplete() || interaction.commandName !== "ticket") return false;
+    const focused = interaction.options.getFocused().toLowerCase();
+    try {
+      await getConfig();
+      const choices = (cachedConfig.teams || [])
+        .filter(team => team.name.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map(team => ({ name: team.name.slice(0, 100), value: team.id }));
+      await interaction.respond(choices);
+    } catch (_) {
+      await interaction.respond([]).catch(() => null);
+    }
+    return true;
   }
 
   async function handleInteraction(interaction) {
@@ -351,7 +476,7 @@ function createModmail({ client, guild, api, logger = console }) {
       await interaction.deferReply({ ephemeral: true });
       const ticket = await ticketFromInteraction(interaction, target);
       if (action === "claim" && interaction.isButton()) {
-        const claimed = await claimTicket(ticket, interaction.user);
+        const claimed = await claimTicket(ticket, interaction.user, interaction.channel);
         await interaction.editReply(`You claimed modmail #${claimed.ticketNumber}.`);
       } else if (action === "preset" && interaction.isButton()) {
         if (ticket.claimedByDiscordId !== interaction.user.id) throw new Error("Claim this ticket before sending a preset reply.");
@@ -403,6 +528,7 @@ function createModmail({ client, guild, api, logger = console }) {
           if (action.action === "claim") await claimTicket(ticket, actor);
           else if (action.action === "transfer") await transferTicket(ticket, action.payload?.teamId, actor);
           else if (action.action === "close") await closeTicket(ticket, actor, action.payload?.reason || "Closed from the Hub");
+          else if (action.action === "reopen") await reopenTicket(ticket, actor);
           else throw new Error("Unknown dashboard action.");
           await api.completeAction(action.id, "Completed", "Applied by the main-server bot.");
         } catch (error) {
@@ -416,7 +542,7 @@ function createModmail({ client, guild, api, logger = console }) {
     }
   }
 
-  return { closeTicket, getConfig, handleInteraction, handleMessage, processPendingActions };
+  return { closeTicket, getConfig, handleAutocomplete, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
 }
 
 module.exports = { createModmail, messagePayload, safeChannelName, transcriptText };
