@@ -71,16 +71,18 @@ test("registers the utilities command suite and clears obsolete global commands"
   assert.doesNotMatch(index, /setName\("log_flight"\)/);
 });
 
-test("ticket commands include reopen, close delays, transcripts, transfers and staff access", () => {
+test("ticket commands include notes, mandatory close reasons, close delays, transcripts, transfers and staff access", () => {
   const index = read("index.js");
   const modmail = read("src/modmail.js");
-  for (const subcommand of ["claim", "close", "close-delay", "transfer", "add", "user", "transcript", "reopen"]) {
+  for (const subcommand of ["claim", "close", "close-delay", "note", "transfer", "add", "user", "transcript", "reopen"]) {
     assert.match(index, new RegExp(`setName\\(\\"${subcommand}\\"\\)`));
   }
   assert.match(modmail, /async function reopenTicket/);
   assert.match(modmail, /permissionOverwrites\.edit/);
   assert.match(modmail, /transcriptText/);
   assert.match(modmail, /async function startCloseDelay/);
+  assert.match(index, /setName\("reason"\).*setRequired\(true\)/);
+  assert.match(modmail, /Private staff note/);
 });
 
 test("runs cached role reconciliation every twenty seconds", () => {
@@ -129,6 +131,9 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.match(modmail, /const BRAND_GREEN = 0x0a8f5b/);
   assert.match(modmail, /function renderTemplate/);
   assert.match(modmail, /function staffRank/);
-  assert.match(modmail, /name: "Rank"/);
+  assert.match(modmail, /setFooter\(\{ text: `Rank · \$\{rank\}` \}\)/);
+  assert.doesNotMatch(modmail, /name: "Staff member"/);
+  assert.doesNotMatch(modmail, /name: "Rank"/);
   assert.doesNotMatch(modmail, /Open · waiting for a staff member/);
+  assert.match(modmail, /Ticket closure cancelled/);
 });

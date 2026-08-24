@@ -72,8 +72,10 @@ async function registerCommands() {
       .setDMPermission(false)
       .addSubcommand(command => command.setName("claim").setDescription("Claim the ticket in this channel"))
       .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
-        .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setMaxLength(500)))
+        .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setRequired(true).setMaxLength(500)))
       .addSubcommand(command => command.setName("close-delay").setDescription("Close in six hours unless the customer replies"))
+      .addSubcommand(command => command.setName("note").setDescription("Add a private staff note without messaging the customer")
+        .addStringOption(option => option.setName("note").setDescription("Private note for staff in this ticket").setRequired(true).setMaxLength(1900)))
       .addSubcommand(command => command.setName("transfer").setDescription("Transfer this ticket to another support team")
         .addStringOption(option => option.setName("team").setDescription("New support team").setRequired(true).setAutocomplete(true)))
       .addSubcommand(command => command.setName("add").setDescription("Add another staff member to this ticket")
@@ -193,7 +195,7 @@ client.once(Events.ClientReady, async readyClient => {
       if (guild.id !== config.guildId) await guild.leave().catch(() => null);
     }
     roleSync = createRoleSync({ guild: state.guild, api });
-    modmail = createModmail({ client: readyClient, guild: state.guild, api, portalUrl: config.portalUrl });
+    modmail = createModmail({ client: readyClient, guild: state.guild, api });
     await Promise.all([registerCommands(), publishCatalogue(), modmail.getConfig(true)]);
     state.ready = true;
     readyClient.user.setPresence({ activities: [{ name: "DM me for support.", type: ActivityType.Playing }], status: "online" });

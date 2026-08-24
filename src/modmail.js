@@ -11,11 +11,12 @@ const {
   TextInputBuilder,
   TextInputStyle
 } = require("discord.js");
+const path = require("node:path");
 
 const PREFIX = "unity-modmail";
 const SUPPORT_EMOJI_ID = "1532706319889600672";
-const SUPPORT_EMOJI_URL = `https://cdn.discordapp.com/emojis/${SUPPORT_EMOJI_ID}.png?size=128&quality=lossless`;
 const BRAND_GREEN = 0x0a8f5b;
+const SUPPORT_BANNER_FILE = path.join(__dirname, "..", "assets", "support-banner.png");
 const TEAM_EMOJI_IDS = {
   "public relations": "1533033769144029334",
   "general support": "1533033753793007647",
@@ -94,13 +95,12 @@ function ticketControls(ticketId) {
   );
 }
 
-function createModmail({ client, guild, api, portalUrl = "", logger = console }) {
+function createModmail({ client, guild, api, logger = console }) {
   let cachedConfig = { settings: {}, teams: [], presets: [] };
   let configLoadedAt = 0;
   let pollingActions = false;
   const pendingMessages = new Map();
   const closeTimers = new Map();
-  const supportBannerUrl = `${String(portalUrl).replace(/\/$/, "")}/assets/support-banner.png`;
 
   async function getConfig(force = false) {
     if (force || Date.now() - configLoadedAt > 60_000) {
@@ -265,9 +265,10 @@ function createModmail({ client, guild, api, portalUrl = "", logger = console })
         .setTitle(renderTemplate(config.settings?.supportPanelTitle, values, "Unity Airlines Support"))
         .setDescription(renderTemplate(config.settings?.welcomeMessage, values, "Welcome to Unity Airlines Support. Choose the team that can best help you."))
         .addFields({ name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." })
-        .setImage(supportBannerUrl)
+        .setImage("attachment://support-banner.png")
         .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
-      components: [new ActionRowBuilder().addComponents(select)]
+      components: [new ActionRowBuilder().addComponents(select)],
+      files: [new AttachmentBuilder(SUPPORT_BANNER_FILE, { name: "support-banner.png" })]
     });
   }
 
@@ -314,11 +315,7 @@ function createModmail({ client, guild, api, portalUrl = "", logger = console })
       .setAuthor({ name: staffName, iconURL: actor.displayAvatarURL?.() })
       .setTitle(renderTemplate(cachedConfig.settings?.staffReplyTitle, values, "Unity Airlines Support"))
       .setDescription(renderTemplate(cachedConfig.settings?.staffReplyMessage, values, "[message]").slice(0, 4096))
-      .addFields(
-        { name: "Staff member", value: staffName.slice(0, 1024), inline: true },
-        { name: "Rank", value: rank.slice(0, 1024), inline: true }
-      )
-      .setFooter({ text: `Unity Airlines Support · Ticket #${ticket.ticketNumber}` })
+      .setFooter({ text: `Rank · ${rank}` })
       .setTimestamp();
     if (attachments.length) embed.addFields({ name: "Attachments", value: attachments.map(item => `[${item.name}](${item.url})`).join("\n").slice(0, 1024) });
     const user = await client.users.fetch(ticket.discordUserId);
@@ -410,6 +407,14 @@ function createModmail({ client, guild, api, portalUrl = "", logger = console })
     if (!ticket.closeDelayAt) return ticket;
     const result = await api.updateTicket(ticket.id, { action: "cancel-close-delay" });
     const active = result.ticket;
+    await user.send({
+      embeds: [new EmbedBuilder()
+        .setColor(BRAND_GREEN)
+        .setTitle("Ticket closure cancelled")
+        .setDescription("Your reply has been received, so the scheduled ticket closure has been cancelled. A staff member will continue to help you shortly.")
+        .setFooter({ text: "Unity Airlines Support" })
+        .setTimestamp()]
+    }).catch(() => null);
     const channel = await ensureChannel(active);
     await channel.send("↩️ The customer replied, so the scheduled close was cancelled.");
     await api.saveMessage(active.id, {
@@ -545,12 +550,30 @@ function createModmail({ client, guild, api, portalUrl = "", logger = console })
         const claimed = await claimTicket(ticket, interaction.user, interaction.channel);
         await interaction.editReply(`You claimed modmail #${claimed.ticketNumber}.`);
       } else if (subcommand === "close") {
-        const reason = interaction.options.getString("reason") || "Closed with /ticket close";
+        const reason = interaction.options.getString("reason", true);
         await closeTicket(ticket, interaction.user, reason);
         await interaction.editReply("Ticket closed and its transcript was logged.");
       } else if (subcommand === "close-delay") {
         const delayed = await startCloseDelay(ticket, interaction.user);
         await interaction.editReply(`Modmail #${delayed.ticketNumber} will close <t:${closeDelayTimestamp(delayed)}:R> unless the customer replies.`);
+      } else if (subcommand === "note") {
+        const note = interaction.options.getString("note", true).trim();
+        const member = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
+        const rank = staffRank(member);
+        await interaction.channel.send({ embeds: [new EmbedBuilder()
+          .setColor(BRAND_GREEN)
+          .setAuthor({ name: member?.displayName || interaction.user.username, iconURL: interaction.user.displayAvatarURL() })
+          .setTitle("Private staff note")
+          .setDescription(note)
+          .setFooter({ text: `Private note · ${rank}` })
+          .setTimestamp()] });
+        await api.saveMessage(ticket.id, {
+          direction: "System",
+          authorDiscordId: interaction.user.id,
+          authorName: interaction.user.tag || interaction.user.username,
+          content: `Private staff note: ${note}`
+        });
+        await interaction.editReply("Private note added to this ticket. It was not sent to the customer.");
       } else if (subcommand === "transfer") {
         const moved = await transferTicket(ticket, interaction.options.getString("team", true), interaction.user);
         await interaction.editReply(`Modmail #${moved.ticketNumber} was transferred and is now unclaimed.`);

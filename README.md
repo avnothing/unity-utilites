@@ -16,7 +16,7 @@ Main-server Discord bot for Unity Airlines. It synchronises mapped staff roles f
 ## Commands
 
 - `/support` — tells a customer how to start a private DM ticket.
-- `/ticket claim|close|close-delay|transfer|add|user|transcript|reopen` — complete ticket control for support staff.
+- `/ticket claim|close|close-delay|note|transfer|add|user|transcript|reopen` — complete ticket control for support staff. Closing requires a reason; notes stay in the private staff channel and transcript only.
 - `/role-sync run|member|status` — manually run or inspect cross-server role synchronisation.
 - `/dashboard` — opens the private Hub modmail dashboard.
 - `/support-panel` — posts the customer-facing support panel in a chosen channel.
