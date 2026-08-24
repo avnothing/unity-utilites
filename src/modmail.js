@@ -143,6 +143,7 @@ function createModmail({ client, guild, api, logger = console }) {
       reason: `Modmail ticket #${ticket.ticketNumber}`
     });
     const updated = await api.updateTicket(ticket.id, { action: "channel", channelId: channel.id });
+    Object.assign(ticket, updated.ticket);
     const embed = new EmbedBuilder()
       .setColor(0x22a87a)
       .setTitle(`Modmail #${ticket.ticketNumber}`)
@@ -155,6 +156,17 @@ function createModmail({ client, guild, api, logger = console }) {
       .setTimestamp();
     await channel.send({ embeds: [embed], components: [ticketControls(ticket.id)] });
     return channel;
+  }
+
+  function ticketOpenedEmbed(ticket) {
+    const team = teamById(ticket.teamId);
+    return new EmbedBuilder()
+      .setColor(0x22a87a)
+      .setTitle(`Support ticket #${ticket.ticketNumber} opened`)
+      .setDescription(`Your message has been sent to **${team?.name || "General Support"}**. Reply in this direct message at any time to continue the conversation.`)
+      .addFields({ name: "Status", value: "Open · waiting for a staff member", inline: true })
+      .setFooter({ text: "Unity Airlines Support" })
+      .setTimestamp();
   }
 
   async function sendUserMessageToStaff(ticket, message) {
@@ -171,24 +183,22 @@ function createModmail({ client, guild, api, logger = console }) {
     await api.saveMessage(ticket.id, messagePayload(message, "User to Staff"));
   }
 
-  async function openForMessage(message, teamId = null) {
+  async function openForMessage(message, teamId = null, { notify = true } = {}) {
     const created = await api.createTicket({
       discordUserId: message.author.id,
       discordUsername: message.author.tag || message.author.username,
       teamId
     });
     const ticket = created.ticket;
-    await ensureChannel(ticket);
     await sendUserMessageToStaff(ticket, message);
-    const team = teamById(ticket.teamId);
-    await message.author.send(`Your Unity Airlines support ticket **#${ticket.ticketNumber}** is open${team ? ` with **${team.name}**` : ""}. Reply here to continue the conversation.`);
+    if (notify) await message.author.send({ embeds: [ticketOpenedEmbed(ticket)] });
     return ticket;
   }
 
   async function promptForTeam(message) {
     const config = await getConfig();
     const teams = (config.teams || []).slice(0, 25);
-    if (teams.length <= 1) return openForMessage(message, teams[0]?.id || null);
+    if (!teams.length) return openForMessage(message, null);
     pendingMessages.set(message.author.id, message);
     const select = new StringSelectMenuBuilder()
       .setCustomId(`${PREFIX}:new:${message.author.id}`)
@@ -200,17 +210,23 @@ function createModmail({ client, guild, api, logger = console }) {
         ...(team.emoji ? { emoji: team.emoji } : {})
       })));
     await message.author.send({
-      content: config.settings?.welcomeMessage || "Welcome to Unity Airlines Support. Choose the team that can best help you.",
+      embeds: [new EmbedBuilder()
+        .setColor(0x22a87a)
+        .setTitle("Unity Airlines Support")
+        .setDescription(config.settings?.welcomeMessage || "Welcome to Unity Airlines Support. Choose the team that can best help you.")
+        .addFields({ name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." })
+        .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
       components: [new ActionRowBuilder().addComponents(select)]
     });
   }
 
   async function handleDirectMessage(message) {
+    await message.react("📩").catch(() => null);
     const existing = await api.openTicket(message.author.id);
     if (existing.ticket) return sendUserMessageToStaff(existing.ticket, message);
     if (pendingMessages.has(message.author.id)) {
       pendingMessages.set(message.author.id, message);
-      return message.react("⏳").catch(() => null);
+      return;
     }
     return promptForTeam(message);
   }
@@ -456,8 +472,8 @@ function createModmail({ client, guild, api, logger = console }) {
         const message = pendingMessages.get(interaction.user.id);
         if (!message) throw new Error("That request expired. Send the bot a new direct message to try again.");
         pendingMessages.delete(interaction.user.id);
-        const ticket = await openForMessage(message, interaction.values[0]);
-        await interaction.editReply({ content: `Your support ticket **#${ticket.ticketNumber}** has been created.`, components: [] });
+        const ticket = await openForMessage(message, interaction.values[0], { notify: false });
+        await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: [] });
         return true;
       }
       if (action === "close" && interaction.isButton()) {
