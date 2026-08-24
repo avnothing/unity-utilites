@@ -136,6 +136,11 @@ function createModmail({ client, guild, api, logger = console }) {
     return Object.fromEntries(Object.entries(normalized).map(([key, value]) => [key.toLowerCase(), String(value ?? "")]));
   }
 
+  function teamTemplate(ticket, key, fallback) {
+    const team = teamById(ticket?.teamId);
+    return team?.messageTemplates?.[key] || cachedConfig.settings?.[key] || fallback;
+  }
+
   function renderTemplate(template, values, fallback) {
     const source = String(template || fallback || "");
     return source.replace(/\[([^\]]+)\]/g, (token, key) => values[String(key).trim().toLowerCase()] ?? token);
@@ -212,11 +217,11 @@ function createModmail({ client, guild, api, logger = console }) {
     const values = ticketTemplateValues(ticket);
     return new EmbedBuilder()
       .setColor(BRAND_GREEN)
-      .setTitle(renderTemplate(cachedConfig.settings?.ticketOpenedTitle, values, "Support ticket #[ticket number] opened"))
-      .setDescription(renderTemplate(cachedConfig.settings?.ticketOpenedMessage, values, "Your message has been sent to **[ticket type]**. Reply in this direct message at any time to continue the conversation."))
+      .setTitle(renderTemplate(teamTemplate(ticket, "ticketOpenedTitle", "Support ticket #[ticket number] opened"), values))
+      .setDescription(renderTemplate(teamTemplate(ticket, "ticketOpenedMessage", "Your message has been sent to **[ticket type]**. Reply in this direct message at any time to continue the conversation."), values))
       .addFields({
-        name: "While you wait",
-        value: "A member of the support team will answer your ticket soon. Please check our [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749) and [Careers information](https://discord.com/channels/1532393442590851313/1532415361960509651)."
+        name: renderTemplate(teamTemplate(ticket, "waitingTitle", "While you wait"), values).slice(0, 256),
+        value: renderTemplate(teamTemplate(ticket, "waitingMessage", "A member of the support team will answer your ticket soon. Please check our [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749) and [Careers information](https://discord.com/channels/1532393442590851313/1532415361960509651)."), values).slice(0, 1024)
       })
       .setFooter({ text: "Unity Airlines Support" })
       .setTimestamp();
@@ -324,8 +329,8 @@ function createModmail({ client, guild, api, logger = console }) {
     const embed = new EmbedBuilder()
       .setColor(BRAND_GREEN)
       .setAuthor({ name: staffName, iconURL: actor.displayAvatarURL?.() })
-      .setTitle(renderTemplate(cachedConfig.settings?.staffReplyTitle, values, "Unity Airlines Support"))
-      .setDescription(renderTemplate(cachedConfig.settings?.staffReplyMessage, values, "[message]").slice(0, 4096))
+      .setTitle(renderTemplate(teamTemplate(ticket, "staffReplyTitle", "Unity Airlines Support"), values))
+      .setDescription(renderTemplate(teamTemplate(ticket, "staffReplyMessage", "[message]"), values).slice(0, 4096))
       .setFooter({ text: `Rank · ${rank}` })
       .setTimestamp();
     if (attachments.length) embed.addFields({ name: "Attachments", value: attachments.map(item => `[${item.name}](${item.url})`).join("\n").slice(0, 1024) });
@@ -390,15 +395,14 @@ function createModmail({ client, guild, api, logger = console }) {
     });
     const delayed = result.ticket;
     const closeAt = closeDelayTimestamp(delayed);
-    const config = await getConfig();
     const user = await client.users.fetch(delayed.discordUserId).catch(() => null);
     if (user) {
       const values = ticketTemplateValues(delayed, { "close time": `<t:${closeAt}:F>` });
       await user.send({
         embeds: [new EmbedBuilder()
           .setColor(BRAND_GREEN)
-          .setTitle(renderTemplate(config.settings?.closeDelayTitle, values, "Your support ticket will close soon"))
-          .setDescription(renderTemplate(config.settings?.closeDelayMessage, values, "We have not heard from you. This ticket will automatically close in six hours unless you reply."))
+          .setTitle(renderTemplate(teamTemplate(delayed, "closeDelayTitle", "Your support ticket will close soon"), values))
+          .setDescription(renderTemplate(teamTemplate(delayed, "closeDelayMessage", "We have not heard from you. This ticket will automatically close in six hours unless you reply."), values))
           .addFields({ name: "Automatic closure", value: `<t:${closeAt}:F>`, inline: true })
           .setFooter({ text: "Reply in this direct message to keep the ticket open." })]
       }).catch(() => null);
@@ -418,11 +422,12 @@ function createModmail({ client, guild, api, logger = console }) {
     if (!ticket.closeDelayAt) return ticket;
     const result = await api.updateTicket(ticket.id, { action: "cancel-close-delay" });
     const active = result.ticket;
+    const values = ticketTemplateValues(active);
     await user.send({
       embeds: [new EmbedBuilder()
         .setColor(BRAND_GREEN)
-        .setTitle("Ticket closure cancelled")
-        .setDescription("Your reply has been received, so the scheduled ticket closure has been cancelled. A staff member will continue to help you shortly.")
+        .setTitle(renderTemplate(teamTemplate(active, "closeDelayCancelledTitle", "Ticket closure cancelled"), values))
+        .setDescription(renderTemplate(teamTemplate(active, "closeDelayCancelledMessage", "Your reply has been received, so the scheduled ticket closure has been cancelled. A staff member will continue to help you shortly."), values))
         .setFooter({ text: "Unity Airlines Support" })
         .setTimestamp()]
     }).catch(() => null);
@@ -451,8 +456,8 @@ function createModmail({ client, guild, api, logger = console }) {
       const values = ticketTemplateValues(ticket, { reason });
       await user.send({ embeds: [new EmbedBuilder()
         .setColor(BRAND_GREEN)
-        .setTitle(renderTemplate(config.settings?.closedTitle, values, "Your support ticket has been closed"))
-        .setDescription(renderTemplate(config.settings?.closedMessage, values, "Your Unity Airlines support ticket has been closed."))
+        .setTitle(renderTemplate(teamTemplate(ticket, "closedTitle", "Your support ticket has been closed"), values))
+        .setDescription(renderTemplate(teamTemplate(ticket, "closedMessage", "Your Unity Airlines support ticket has been closed."), values))
         .addFields({ name: "Reason", value: reason.slice(0, 1024) })
         .setFooter({ text: "Unity Airlines Support" })
         .setTimestamp()] }).catch(() => null);
