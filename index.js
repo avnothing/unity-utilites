@@ -22,7 +22,7 @@ const { createRoleSync } = require("./src/role-sync");
 
 const config = loadConfig();
 const api = createHubApi(config);
-const state = { ready: false, guild: null, lastCatalogueAt: null, lastRoleSyncAt: null };
+const state = { ready: false, guild: null, lastCatalogueAt: null, lastRoleSyncAt: null, giveaways: new Map(), polls: new Map(), events: new Map() };
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -106,7 +106,29 @@ async function registerCommands() {
       .setName("utilities-status")
       .setDescription("Show the utilities bot, Hub, modmail and role-sync status")
       .setDMPermission(false)
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+    new SlashCommandBuilder()
+      .setName("community")
+      .setDescription("Run community giveaways, polls, RSVPs and reminders")
+      .setDMPermission(false)
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+      .addSubcommand(command => command.setName("giveaway").setDescription("Start a giveaway in this channel")
+        .addStringOption(option => option.setName("prize").setDescription("What can members win?").setRequired(true).setMaxLength(200))
+        .addIntegerOption(option => option.setName("minutes").setDescription("How long the giveaway runs").setRequired(true).setMinValue(1).setMaxValue(10080))
+        .addIntegerOption(option => option.setName("winners").setDescription("Number of winners").setRequired(false).setMinValue(1).setMaxValue(10)))
+      .addSubcommand(command => command.setName("poll").setDescription("Create a two-to-four option poll")
+        .addStringOption(option => option.setName("question").setDescription("Poll question").setRequired(true).setMaxLength(240))
+        .addStringOption(option => option.setName("option_1").setDescription("First option").setRequired(true).setMaxLength(80))
+        .addStringOption(option => option.setName("option_2").setDescription("Second option").setRequired(true).setMaxLength(80))
+        .addStringOption(option => option.setName("option_3").setDescription("Third option").setRequired(false).setMaxLength(80))
+        .addStringOption(option => option.setName("option_4").setDescription("Fourth option").setRequired(false).setMaxLength(80)))
+      .addSubcommand(command => command.setName("event").setDescription("Post an event with RSVP buttons and a reminder")
+        .addStringOption(option => option.setName("title").setDescription("Event title").setRequired(true).setMaxLength(160))
+        .addStringOption(option => option.setName("when").setDescription("When the event starts, e.g. Saturday 7pm UK").setRequired(true).setMaxLength(160))
+        .addIntegerOption(option => option.setName("reminder_minutes").setDescription("Reminder after this many minutes").setRequired(false).setMinValue(1).setMaxValue(10080)))
+      .addSubcommand(command => command.setName("remind").setDescription("Send a timed reminder in this channel")
+        .addStringOption(option => option.setName("message").setDescription("Reminder message").setRequired(true).setMaxLength(1500))
+        .addIntegerOption(option => option.setName("minutes").setDescription("Minutes until it sends").setRequired(true).setMinValue(1).setMaxValue(10080)))
   ];
   const rest = new REST({ version: "10" }).setToken(config.token);
   await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
@@ -162,6 +184,45 @@ async function handleUtilitiesStatus(interaction) {
   return interaction.editReply({ embeds: [embed] });
 }
 
+const communityColour = 0x0a8f5b;
+const communityId = prefix => `${prefix}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+
+async function handleCommunityCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "remind") {
+    const minutes = interaction.options.getInteger("minutes", true), message = interaction.options.getString("message", true);
+    await interaction.reply({ content: `Reminder scheduled for <t:${Math.floor((Date.now() + minutes * 60000) / 1000)}:R>.`, ephemeral: true });
+    setTimeout(() => interaction.channel?.send({ embeds: [new EmbedBuilder().setColor(communityColour).setTitle("Unity Airlines reminder").setDescription(message).setTimestamp()] }).catch(() => null), minutes * 60000).unref?.();
+    return;
+  }
+  if (subcommand === "giveaway") {
+    const prize = interaction.options.getString("prize", true), minutes = interaction.options.getInteger("minutes", true), winners = interaction.options.getInteger("winners") || 1, id = communityId("giveaway"), endsAt = Date.now() + minutes * 60000;
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`ua:${id}:enter`).setLabel("Enter giveaway").setStyle(ButtonStyle.Success));
+    await interaction.reply({ embeds: [new EmbedBuilder().setColor(communityColour).setTitle("Unity Airlines giveaway").setDescription(`**Prize:** ${prize}\n**Winners:** ${winners}\nEnds <t:${Math.floor(endsAt / 1000)}:R>`).setFooter({ text: "Press Enter giveaway to take part." })], components: [row] });
+    const message = await interaction.fetchReply(); state.giveaways.set(id, { entries: new Set(), prize, winners, channelId: interaction.channelId, messageId: message.id });
+    setTimeout(async () => { const giveaway = state.giveaways.get(id); if (!giveaway) return; const entries = [...giveaway.entries]; const selected = entries.sort(() => Math.random() - .5).slice(0, giveaway.winners); const channel = await client.channels.fetch(giveaway.channelId).catch(() => null); await channel?.send(selected.length ? `🎉 Congratulations ${selected.map(userId => `<@${userId}>`).join(", ")} — you won **${giveaway.prize}**!` : `The giveaway for **${giveaway.prize}** ended with no entries.`); state.giveaways.delete(id); }, minutes * 60000).unref?.();
+    return;
+  }
+  if (subcommand === "poll") {
+    const id = communityId("poll"), options = [1,2,3,4].map(number => interaction.options.getString(`option_${number}`)).filter(Boolean);
+    const row = new ActionRowBuilder().addComponents(options.map((option,index) => new ButtonBuilder().setCustomId(`ua:${id}:${index}`).setLabel(option).setStyle(ButtonStyle.Secondary)));
+    await interaction.reply({ embeds: [new EmbedBuilder().setColor(communityColour).setTitle("Unity Airlines poll").setDescription(interaction.options.getString("question", true)).setFooter({ text: "Choose one option below." })], components: [row] });
+    const message = await interaction.fetchReply(); state.polls.set(id, { options, votes: new Map(), channelId: interaction.channelId, messageId: message.id }); return;
+  }
+  const id = communityId("event"), title = interaction.options.getString("title", true), when = interaction.options.getString("when", true), reminderMinutes = interaction.options.getInteger("reminder_minutes");
+  const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`ua:${id}:yes`).setLabel("Going").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`ua:${id}:maybe`).setLabel("Maybe").setStyle(ButtonStyle.Secondary));
+  await interaction.reply({ embeds: [new EmbedBuilder().setColor(communityColour).setTitle(title).setDescription(`**When:** ${when}\n\nUse the buttons below to RSVP.`).setFooter({ text: "Unity Airlines community event" })], components: [row] });
+  const message = await interaction.fetchReply(); state.events.set(id, { title, when, yes: new Set(), maybe: new Set(), channelId: interaction.channelId, messageId: message.id });
+  if (reminderMinutes) setTimeout(() => interaction.channel?.send(`📅 Reminder: **${title}** is coming up — ${when}.`).catch(() => null), reminderMinutes * 60000).unref?.();
+}
+
+async function handleCommunityButton(interaction) {
+  const [, id, choice] = interaction.customId.split(":");
+  const giveaway = state.giveaways.get(id); if (giveaway && choice === "enter") { giveaway.entries.add(interaction.user.id); return interaction.reply({ content: "You are entered into this giveaway.", ephemeral: true }); }
+  const poll = state.polls.get(id); if (poll) { poll.votes.set(interaction.user.id, Number(choice)); const counts = poll.options.map((_, index) => [...poll.votes.values()].filter(vote => vote === index).length); return interaction.reply({ content: `Your vote for **${poll.options[Number(choice)]}** has been recorded.\n${poll.options.map((option,index)=>`${option}: ${counts[index]}`).join(" · ")}`, ephemeral: true }); }
+  const event = state.events.get(id); if (event) { event.yes.delete(interaction.user.id); event.maybe.delete(interaction.user.id); event[choice]?.add(interaction.user.id); return interaction.reply({ content: choice === "yes" ? "You are marked as going." : "You are marked as maybe.", ephemeral: true }); }
+}
+
 function safeInterval(fn, milliseconds, label) {
   const timer = setInterval(() => Promise.resolve(fn()).catch(error => console.error(`${label}: ${error.stack || error.message}`)), milliseconds);
   timer.unref?.();
@@ -199,6 +260,7 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isAutocomplete() && await modmail?.handleAutocomplete(interaction)) return;
     if (await modmail?.handleInteraction(interaction)) return;
+    if (interaction.isButton() && interaction.customId.startsWith("ua:")) return handleCommunityButton(interaction);
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName === "support") {
       await interaction.reply({ content: `Direct-message <@${client.user.id}> to open a private Unity Airlines support ticket. You will be asked to choose the right support team.`, ephemeral: true });
@@ -211,6 +273,8 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply({ content: "Open the private Unity Airlines Hub dashboard:", components: [row], ephemeral: true });
     } else if (interaction.commandName === "utilities-status") {
       await handleUtilitiesStatus(interaction);
+    } else if (interaction.commandName === "community") {
+      await handleCommunityCommand(interaction);
     }
   } catch (error) {
     console.error(`Command failed: ${error.stack || error.message}`);

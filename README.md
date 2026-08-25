@@ -21,6 +21,7 @@ Main-server Discord bot for Unity Airlines. It synchronises mapped staff roles f
 - `/dashboard` — opens the private Hub modmail dashboard.
 - `/support-panel` — posts the customer-facing support panel in a chosen channel.
 - `/utilities-status` — checks Discord, Hub, support-team and sync health.
+- `/community giveaway|poll|event|remind` — staff-run community tools. Giveaways use an Enter button, polls use up to four button choices, events collect Going/Maybe RSVPs, and reminders can be scheduled in the current channel.
 
 Ticket and utilities commands are permission-gated in Discord. At startup the bot clears the application's obsolete global commands, including the old flight commands, and registers this command set directly in the main server so updates appear immediately.
 
