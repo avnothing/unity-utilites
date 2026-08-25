@@ -36,7 +36,6 @@ function createHubApi({ portalUrl, botApiSecret }) {
     transcript: ticketId => request(`/api/bot/main/tickets/${encodeURIComponent(ticketId)}/transcript`),
     dueCloseDelays: () => request("/api/bot/main/tickets/close-delays"),
     dueInactivity: () => request("/api/bot/main/tickets/inactivity"),
-    setStaffAvailability: payload => request("/api/bot/main/staff-availability", { method: "PUT", body: payload }),
     pendingActions: () => request("/api/bot/main/actions"),
     completeAction: (actionId, status, result) => request(`/api/bot/main/actions/${encodeURIComponent(actionId)}`, { method: "PATCH", body: { status, result } })
   };

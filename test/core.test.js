@@ -65,12 +65,14 @@ test("transcripts include direction, content and attachments in London time", ()
 
 test("registers the utilities command suite and clears obsolete global commands", () => {
   const index = read("index.js");
-  for (const command of ["ticket", "role-sync", "dashboard", "support-panel", "utilities-status"]) {
+  for (const command of ["ticket", "role-sync", "dashboard", "utilities-status"]) {
     assert.match(index, new RegExp(`setName\\(\\"${command}\\"\\)`));
   }
   assert.match(index, /Routes\.applicationCommands\(config\.clientId\).*body: \[\]/s);
   assert.doesNotMatch(index, /setName\("change_flights"\)/);
   assert.doesNotMatch(index, /setName\("log_flight"\)/);
+  assert.doesNotMatch(index, /setName\("support-panel"\)/);
+  assert.doesNotMatch(index, /setName\("availability"\)/);
 });
 
 test("ticket commands include notes, mandatory close reasons, close delays, transcripts, transfers and staff access", () => {
@@ -149,8 +151,9 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.match(modmail, /interaction\.followUp\(\{ embeds: \[waitingEmbed\(ticket\)\] \}\)/);
   assert.match(modmail, /closeDelayCancelledMessage/);
   assert.match(modmail, /dueInactivity/);
-  assert.match(modmail, /setStaffAvailability/);
-  assert.match(modmail, /This solved my question/);
+  assert.match(modmail, /outsideOperatingHoursEmbed/);
+  assert.match(modmail, /I no longer need a ticket/);
+  assert.match(modmail, /rate-submit/);
   assert.match(modmail, /1532410732874825749/);
   assert.match(modmail, /1532415361960509651/);
 });

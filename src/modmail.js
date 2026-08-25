@@ -246,6 +246,20 @@ function createModmail({ client, guild, api, logger = console }) {
       .setTimestamp();
   }
 
+  function outsideOperatingHoursEmbed() {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+    const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+    const weekend = ["Sat", "Sun"].includes(parts.weekday);
+    const open = weekend ? minutes >= 9 * 60 && minutes < 22 * 60 : minutes >= 15 * 60 && minutes < 21 * 60;
+    if (open) return null;
+    return new EmbedBuilder()
+      .setColor(BRAND_GREEN)
+      .setTitle("Outside our main support hours")
+      .setDescription("Your ticket has been received, but please expect a slower response until our main support hours.\n\n**Weekdays:** 3pm–9pm UK\n**Weekends:** 9am–10pm UK\n**Bank Holidays (including Christmas and New Year):** Limited support")
+      .setFooter({ text: "Unity Airlines Support" })
+      .setTimestamp();
+  }
+
   function customerTicketControls(ticket) {
     if (!cachedConfig.settings?.allowCustomerClose) return [];
     return [new ActionRowBuilder().addComponents(
@@ -278,6 +292,8 @@ function createModmail({ client, guild, api, logger = console }) {
     if (notify) {
       await message.author.send({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
       await message.author.send({ embeds: [waitingEmbed(ticket)] });
+      const outsideHours = outsideOperatingHoursEmbed();
+      if (outsideHours) await message.author.send({ embeds: [outsideHours] });
     }
     return ticket;
   }
@@ -310,7 +326,7 @@ function createModmail({ client, guild, api, logger = console }) {
         .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
       components: [
         new ActionRowBuilder().addComponents(select),
-        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${PREFIX}:faq-resolved:${message.author.id}`).setLabel("This solved my question").setStyle(ButtonStyle.Success))
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${PREFIX}:faq-resolved:${message.author.id}`).setLabel("I no longer need a ticket").setStyle(ButtonStyle.Success))
       ],
       files: [new AttachmentBuilder(SUPPORT_BANNER_FILE, { name: "support-banner.png" })]
     });
@@ -511,16 +527,13 @@ function createModmail({ client, guild, api, logger = console }) {
     }
     const transcript = await api.transcript(ticket.id);
     const text = transcriptText(transcript.ticket, transcript.messages);
-    if (user && config.settings?.sendTranscriptOnClose !== false) {
-      const file = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: `unity-airlines-ticket-${ticket.ticketNumber}.txt` });
-      await user.send({ content: "Here is a copy of your support-ticket transcript.", files: [file] }).catch(() => null);
-    }
     if (user) {
       await user.send({ embeds: [new EmbedBuilder()
         .setColor(BRAND_GREEN)
         .setTitle("How did we do?")
-        .setDescription("Please rate your Unity Airlines support experience.")
-        .setFooter({ text: "Your rating helps us improve." })], components: ratingControls(ticket.id) }).catch(() => null);
+        .setDescription("Please rate your Unity Airlines support experience. You can also tell us why after choosing a rating.")
+        .setFooter({ text: "Your rating helps us improve." })
+        .setTimestamp()], components: ratingControls(ticket.id) }).catch(() => null);
     }
     const logChannelId = config.settings?.logChannelId;
     const logChannel = logChannelId ? await guild.channels.fetch(logChannelId).catch(() => null) : null;
@@ -726,8 +739,19 @@ function createModmail({ client, guild, api, logger = console }) {
         const { ticket } = await api.transcript(target);
         if (!ticket || ticket.status !== "Closed") throw new Error("This ticket is no longer available for rating.");
         if (interaction.user.id !== ticket.discordUserId) throw new Error("Only the customer who opened this ticket can rate it.");
-        await api.updateTicket(ticket.id, { action: "rating", rating });
-        await interaction.update({ content: `Thanks — you rated this ticket ${rating} out of 5.`, embeds: [], components: [] });
+        const modal = new ModalBuilder().setCustomId(`${PREFIX}:rate-submit:${ticket.id}:${rating}`).setTitle(`Rate ticket #${ticket.ticketNumber}`);
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("reason").setLabel("Why did you choose this rating? (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(1000)));
+        await interaction.showModal(modal);
+        return true;
+      }
+      if (action === "rate-submit" && interaction.isModalSubmit()) {
+        const rating = Number(actionValue);
+        const { ticket } = await api.transcript(target);
+        if (!ticket || ticket.status !== "Closed") throw new Error("This ticket is no longer available for rating.");
+        if (interaction.user.id !== ticket.discordUserId) throw new Error("Only the customer who opened this ticket can rate it.");
+        const reason = interaction.fields.getTextInputValue("reason").trim();
+        await api.updateTicket(ticket.id, { action: "rating", rating, reason });
+        await interaction.reply({ content: `Thanks — you rated this ticket ${rating} out of 5.`, ephemeral: true });
         return true;
       }
       if (action === "faq-resolved" && interaction.isButton()) {
@@ -745,6 +769,8 @@ function createModmail({ client, guild, api, logger = console }) {
         const ticket = await openForMessage(message, interaction.values[0], { notify: false });
         await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket), attachments: [] });
         await interaction.followUp({ embeds: [waitingEmbed(ticket)] });
+        const outsideHours = outsideOperatingHoursEmbed();
+        if (outsideHours) await interaction.followUp({ embeds: [outsideHours] });
         return true;
       }
       if (action === "user-close" && interaction.isButton()) {
@@ -859,27 +885,7 @@ function createModmail({ client, guild, api, logger = console }) {
     }
   }
 
-  async function handleAvailabilityCommand(interaction) {
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      await getConfig();
-      const member = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
-      if (!isConfiguredSupportStaff(member)) throw new Error("Only configured Unity Airlines support staff can set availability.");
-      const status = interaction.options.getString("status", true);
-      const result = await api.setStaffAvailability({
-        discordUserId: interaction.user.id,
-        discordUsername: interaction.user.tag || interaction.user.username,
-        status
-      });
-      await interaction.editReply(`You are now marked as **${result.availability.status}** in the support dashboard.`);
-      return true;
-    } catch (error) {
-      await interaction.editReply(error.message).catch(() => null);
-      return true;
-    }
-  }
-
-  return { closeForMemberLeave, closeTicket, getConfig, handleAutocomplete, handleAvailabilityCommand, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
+  return { closeForMemberLeave, closeTicket, getConfig, handleAutocomplete, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
 }
 
 module.exports = { createModmail, messagePayload, safeChannelName, transcriptText };

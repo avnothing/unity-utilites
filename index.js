@@ -89,13 +89,6 @@ async function registerCommands() {
       .addSubcommand(command => command.setName("reopen").setDescription("Reopen a closed ticket by its number")
         .addIntegerOption(option => option.setName("ticket_number").setDescription("Ticket number shown in the dashboard or log").setRequired(true).setMinValue(1))),
     new SlashCommandBuilder()
-      .setName("availability")
-      .setDescription("Set your Unity Airlines support availability")
-      .setDMPermission(false)
-      .addStringOption(option => option.setName("status").setDescription("Your current support status").setRequired(true).addChoices(
-        { name: "Available", value: "Available" }, { name: "Away", value: "Away" }
-      )),
-    new SlashCommandBuilder()
       .setName("role-sync")
       .setDescription("Control staff role synchronisation")
       .setDMPermission(false)
@@ -109,12 +102,6 @@ async function registerCommands() {
       .setDescription("Open the Unity Airlines modmail dashboard")
       .setDMPermission(false)
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-    new SlashCommandBuilder()
-      .setName("support-panel")
-      .setDescription("Post the main-server support panel")
-      .setDMPermission(false)
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
-      .addChannelOption(option => option.setName("channel").setDescription("Channel for the panel; defaults to this channel").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)),
     new SlashCommandBuilder()
       .setName("utilities-status")
       .setDescription("Show the utilities bot, Hub, modmail and role-sync status")
@@ -155,24 +142,6 @@ async function handleRoleSyncCommand(interaction) {
     `**Managed main-server roles:** ${payload.managedRoleIds?.length || 0}`,
     `**Customer fallback configured:** ${payload.fallbackRoleIds?.length ? "Yes" : "No"}`
   ].join("\n"));
-}
-
-async function handleSupportPanelCommand(interaction) {
-  await interaction.deferReply({ ephemeral: true });
-  const channel = interaction.options.getChannel("channel") || interaction.channel;
-  if (!channel?.isTextBased()) return interaction.editReply("Choose a text channel for the support panel.");
-  const embed = new EmbedBuilder()
-    .setColor(0x0a8f5b)
-    .setTitle("Unity Airlines Support")
-    .setDescription("Need help from our team? Open a private conversation by messaging Unity Utilities. You will be asked to choose the support team that can best help you.")
-    .addFields({ name: "Private and secure", value: "Your messages are relayed to a private support channel and recorded in the ticket transcript." })
-    .setFooter({ text: "Please do not open duplicate tickets." });
-  const buttons = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Open support").setURL(`https://discord.com/users/${client.user.id}`),
-    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Unity Airlines Hub").setURL(config.portalUrl)
-  );
-  await channel.send({ embeds: [embed], components: [buttons] });
-  return interaction.editReply(`Support panel posted in ${channel}.`);
 }
 
 async function handleUtilitiesStatus(interaction) {
@@ -235,15 +204,11 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply({ content: `Direct-message <@${client.user.id}> to open a private Unity Airlines support ticket. You will be asked to choose the right support team.`, ephemeral: true });
     } else if (interaction.commandName === "ticket") {
       await modmail.handleTicketCommand(interaction);
-    } else if (interaction.commandName === "availability") {
-      await modmail.handleAvailabilityCommand(interaction);
     } else if (interaction.commandName === "role-sync") {
       await handleRoleSyncCommand(interaction);
     } else if (interaction.commandName === "dashboard") {
       const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Open Modmail Dashboard").setURL(`${config.portalUrl}/portal.html?page=modmail`));
       await interaction.reply({ content: "Open the private Unity Airlines Hub dashboard:", components: [row], ephemeral: true });
-    } else if (interaction.commandName === "support-panel") {
-      await handleSupportPanelCommand(interaction);
     } else if (interaction.commandName === "utilities-status") {
       await handleUtilitiesStatus(interaction);
     }
