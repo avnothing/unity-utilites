@@ -74,6 +74,10 @@ async function registerCommands() {
       .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
         .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setRequired(true).setMaxLength(500)))
       .addSubcommand(command => command.setName("close-delay").setDescription("Close in six hours unless the customer replies"))
+      .addSubcommand(command => command.setName("priority").setDescription("Set this ticket's priority")
+        .addStringOption(option => option.setName("priority").setDescription("Ticket priority").setRequired(true).addChoices(
+          { name: "Low", value: "Low" }, { name: "Normal", value: "Normal" }, { name: "High", value: "High" }, { name: "Urgent", value: "Urgent" }
+        )))
       .addSubcommand(command => command.setName("note").setDescription("Add a private staff note without messaging the customer")
         .addStringOption(option => option.setName("note").setDescription("Private note for staff in this ticket").setRequired(true).setMaxLength(1900)))
       .addSubcommand(command => command.setName("transfer").setDescription("Transfer this ticket to another support team")
@@ -84,6 +88,13 @@ async function registerCommands() {
       .addSubcommand(command => command.setName("transcript").setDescription("Generate the current ticket transcript"))
       .addSubcommand(command => command.setName("reopen").setDescription("Reopen a closed ticket by its number")
         .addIntegerOption(option => option.setName("ticket_number").setDescription("Ticket number shown in the dashboard or log").setRequired(true).setMinValue(1))),
+    new SlashCommandBuilder()
+      .setName("availability")
+      .setDescription("Set your Unity Airlines support availability")
+      .setDMPermission(false)
+      .addStringOption(option => option.setName("status").setDescription("Your current support status").setRequired(true).addChoices(
+        { name: "Available", value: "Available" }, { name: "Away", value: "Away" }
+      )),
     new SlashCommandBuilder()
       .setName("role-sync")
       .setDescription("Control staff role synchronisation")
@@ -224,6 +235,8 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply({ content: `Direct-message <@${client.user.id}> to open a private Unity Airlines support ticket. You will be asked to choose the right support team.`, ephemeral: true });
     } else if (interaction.commandName === "ticket") {
       await modmail.handleTicketCommand(interaction);
+    } else if (interaction.commandName === "availability") {
+      await modmail.handleAvailabilityCommand(interaction);
     } else if (interaction.commandName === "role-sync") {
       await handleRoleSyncCommand(interaction);
     } else if (interaction.commandName === "dashboard") {

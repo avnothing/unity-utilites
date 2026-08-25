@@ -31,8 +31,10 @@ test("fallback customer role is treated as a normal managed target", () => {
   assert.deepEqual(roleChanges(["555"], ["777"], ["555", "777"]), { add: ["777"], remove: ["555"] });
 });
 
-test("ticket channel names are safe and deterministic", () => {
-  assert.equal(safeChannelName({ ticketNumber: 42, discordUsername: "A User!" }), "ticket-42-a-user");
+test("ticket channel names are team-based and deterministic", () => {
+  assert.equal(safeChannelName({ ticketNumber: 42 }, { name: "General Support" }), "general-042");
+  assert.equal(safeChannelName({ ticketNumber: 1 }, { name: "Human Resources" }), "hr-001");
+  assert.equal(safeChannelName({ ticketNumber: 7 }, { name: "Public Relations" }), "pr-007");
 });
 
 test("transcripts include direction, content and attachments in London time", () => {
@@ -135,6 +137,8 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.match(modmail, /function renderTemplate/);
   assert.match(modmail, /function teamTemplate/);
   assert.match(modmail, /function waitingEmbed/);
+  assert.match(modmail, /function ratingControls/);
+  assert.match(modmail, /function ticketTeamPrefix/);
   assert.match(modmail, /function staffRank/);
   assert.match(modmail, /setFooter\(\{ text: `Rank · \$\{rank\}` \}\)/);
   assert.doesNotMatch(modmail, /name: "Staff member"/);
@@ -144,6 +148,9 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.match(modmail, /A member of the support team will answer your ticket soon/);
   assert.match(modmail, /interaction\.followUp\(\{ embeds: \[waitingEmbed\(ticket\)\] \}\)/);
   assert.match(modmail, /closeDelayCancelledMessage/);
+  assert.match(modmail, /dueInactivity/);
+  assert.match(modmail, /setStaffAvailability/);
+  assert.match(modmail, /This solved my question/);
   assert.match(modmail, /1532410732874825749/);
   assert.match(modmail, /1532415361960509651/);
 });

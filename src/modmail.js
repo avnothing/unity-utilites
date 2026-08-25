@@ -30,13 +30,16 @@ const STAFF_CHANNEL_PERMISSIONS = [
   PermissionFlagsBits.EmbedLinks
 ];
 
-function safeChannelName(ticket) {
-  const user = String(ticket.discordUsername || "user")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 45) || "user";
-  return `ticket-${ticket.ticketNumber}-${user}`.slice(0, 95);
+function ticketTeamPrefix(team) {
+  const name = String(team?.name || "General").trim().toLowerCase();
+  if (name === "human resources") return "hr";
+  if (name === "public relations") return "pr";
+  if (name === "general support" || name === "general") return "general";
+  return name.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "general";
+}
+
+function safeChannelName(ticket, team = null) {
+  return `${ticketTeamPrefix(team)}-${String(ticket.ticketNumber).padStart(3, "0")}`.slice(0, 95);
 }
 
 function attachmentList(attachments) {
@@ -93,6 +96,15 @@ function ticketControls(ticketId) {
     new ButtonBuilder().setCustomId(`${PREFIX}:transfer:${ticketId}`).setLabel("Transfer").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`${PREFIX}:close:${ticketId}`).setLabel("Close").setStyle(ButtonStyle.Danger)
   );
+}
+
+function ratingControls(ticketId) {
+  return [new ActionRowBuilder().addComponents(
+    ...[1, 2, 3, 4, 5].map(rating => new ButtonBuilder()
+      .setCustomId(`${PREFIX}:rate:${ticketId}:${rating}`)
+      .setLabel(`${rating} ★`)
+      .setStyle(rating >= 4 ? ButtonStyle.Success : rating === 3 ? ButtonStyle.Primary : ButtonStyle.Secondary))
+  )];
 }
 
 function createModmail({ client, guild, api, logger = console }) {
@@ -190,7 +202,7 @@ function createModmail({ client, guild, api, logger = console }) {
     const team = teamById(ticket.teamId);
     const parent = cachedConfig.settings?.ticketCategoryId || undefined;
     const channel = await guild.channels.create({
-      name: safeChannelName(ticket),
+      name: safeChannelName(ticket, team),
       type: ChannelType.GuildText,
       parent,
       topic: `Unity Airlines modmail #${ticket.ticketNumber} · Discord user ${ticket.discordUserId}`,
@@ -205,6 +217,7 @@ function createModmail({ client, guild, api, logger = console }) {
       .setDescription(`Support request from <@${ticket.discordUserId}> (${ticket.discordUsername}).`)
       .addFields(
         { name: "Support team", value: team?.name || "General", inline: true },
+        { name: "Priority", value: ticket.priority || "Normal", inline: true },
         { name: "Status", value: "Open · unclaimed", inline: true }
       )
       .setFooter({ text: "Claim this ticket before replying." })
@@ -289,10 +302,16 @@ function createModmail({ client, guild, api, logger = console }) {
         .setColor(BRAND_GREEN)
         .setTitle(renderTemplate(config.settings?.supportPanelTitle, values, "Unity Airlines Support"))
         .setDescription(renderTemplate(config.settings?.welcomeMessage, values, "Welcome to Unity Airlines Support. Choose the team that can best help you."))
-        .addFields({ name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." })
+        .addFields(
+          { name: "Choose a support team", value: "Use the menu below to send your message to the right team, such as Public Relations, Human Resources or General Support." },
+          { name: "Before opening General Support", value: "You may find the answer in [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749). If it solves your question, use the button below instead." }
+        )
         .setImage("attachment://support-banner.png")
         .setFooter({ text: "Your ticket is private and visible only to the assigned support team." })],
-      components: [new ActionRowBuilder().addComponents(select)],
+      components: [
+        new ActionRowBuilder().addComponents(select),
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`${PREFIX}:faq-resolved:${message.author.id}`).setLabel("This solved my question").setStyle(ButtonStyle.Success))
+      ],
       files: [new AttachmentBuilder(SUPPORT_BANNER_FILE, { name: "support-banner.png" })]
     });
   }
@@ -347,6 +366,24 @@ function createModmail({ client, guild, api, logger = console }) {
     await user.send({ embeds: [embed] });
   }
 
+  async function sendInactivityReminder(ticket, reminderHours, closeHours) {
+    await getConfig();
+    const user = await client.users.fetch(ticket.discordUserId).catch(() => null);
+    if (!user) return false;
+    const values = ticketTemplateValues(ticket, { "close time": `${closeHours} hours after the last staff reply` });
+    await user.send({ embeds: [new EmbedBuilder()
+      .setColor(BRAND_GREEN)
+      .setTitle(renderTemplate(teamTemplate(ticket, "inactivityReminderTitle", "We are still here to help"), values))
+      .setDescription(renderTemplate(teamTemplate(ticket, "inactivityReminderMessage", `We have not heard from you for ${reminderHours} hours. Reply in this direct message if you still need help; otherwise your ticket will close after ${closeHours} hours without a reply.`), values))
+      .setFooter({ text: "Unity Airlines Support" })
+      .setTimestamp()] }).catch(() => null);
+    await api.updateTicket(ticket.id, { action: "inactivity-reminded" });
+    const channel = await ensureChannel(ticket);
+    await channel.send(`⏰ Inactivity reminder sent. The customer has not replied since the last staff message.`).catch(() => null);
+    await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: client.user.id, authorName: client.user.tag || "Unity Utilities", content: `Inactivity reminder sent after ${reminderHours} hours.` });
+    return true;
+  }
+
   async function claimTicket(ticket, actor, accessChannel = null) {
     const member = await guild.members.fetch(actor.id).catch(() => null);
     await getConfig();
@@ -375,6 +412,7 @@ function createModmail({ client, guild, api, logger = console }) {
     const result = await api.updateTicket(ticket.id, { action: "transfer", teamId });
     const channel = await ensureChannel(result.ticket);
     await updateTeamPermissions(channel, team);
+    await channel.setName(safeChannelName(result.ticket, team)).catch(() => null);
     await channel.send(`↪️ Ticket transferred to **${team.name}** by <@${actor.id}>. The ticket is now unclaimed.`);
     await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: actor.id, authorName: actor.tag || actor.username, content: `Ticket transferred to ${team.name}.` });
     return result.ticket;
@@ -473,6 +511,17 @@ function createModmail({ client, guild, api, logger = console }) {
     }
     const transcript = await api.transcript(ticket.id);
     const text = transcriptText(transcript.ticket, transcript.messages);
+    if (user && config.settings?.sendTranscriptOnClose !== false) {
+      const file = new AttachmentBuilder(Buffer.from(text, "utf8"), { name: `unity-airlines-ticket-${ticket.ticketNumber}.txt` });
+      await user.send({ content: "Here is a copy of your support-ticket transcript.", files: [file] }).catch(() => null);
+    }
+    if (user) {
+      await user.send({ embeds: [new EmbedBuilder()
+        .setColor(BRAND_GREEN)
+        .setTitle("How did we do?")
+        .setDescription("Please rate your Unity Airlines support experience.")
+        .setFooter({ text: "Your rating helps us improve." })], components: ratingControls(ticket.id) }).catch(() => null);
+    }
     const logChannelId = config.settings?.logChannelId;
     const logChannel = logChannelId ? await guild.channels.fetch(logChannelId).catch(() => null) : null;
     if (logChannel?.isTextBased()) {
@@ -523,7 +572,7 @@ function createModmail({ client, guild, api, logger = console }) {
       actorName: actor.tag || actor.username || "Hub staff"
     });
     const channel = await ensureChannel(result.ticket);
-    await channel.setName(safeChannelName(result.ticket)).catch(() => null);
+    await channel.setName(safeChannelName(result.ticket, teamById(result.ticket.teamId))).catch(() => null);
     await channel.send({ content: `🔓 Ticket reopened by <@${actor.id}>. It is unclaimed.`, components: [ticketControls(ticket.id)] });
     await api.saveMessage(ticket.id, {
       direction: "System",
@@ -605,6 +654,12 @@ function createModmail({ client, guild, api, logger = console }) {
       } else if (subcommand === "transfer") {
         const moved = await transferTicket(ticket, interaction.options.getString("team", true), interaction.user);
         await interaction.editReply(`Modmail #${moved.ticketNumber} was transferred and is now unclaimed.`);
+      } else if (subcommand === "priority") {
+        const priority = interaction.options.getString("priority", true);
+        const result = await api.updateTicket(ticket.id, { action: "priority", priority });
+        await interaction.channel.send(`🚩 Ticket priority changed to **${result.ticket.priority}** by <@${interaction.user.id}>.`);
+        await api.saveMessage(ticket.id, { direction: "System", authorDiscordId: interaction.user.id, authorName: interaction.user.tag || interaction.user.username, content: `Ticket priority changed to ${result.ticket.priority}.` });
+        await interaction.editReply(`Ticket priority is now ${result.ticket.priority}.`);
       } else if (subcommand === "add") {
         const user = interaction.options.getUser("staff_member", true);
         const member = await guild.members.fetch(user.id).catch(() => null);
@@ -664,8 +719,23 @@ function createModmail({ client, guild, api, logger = console }) {
 
   async function handleInteraction(interaction) {
     if (!interaction.customId?.startsWith(`${PREFIX}:`)) return false;
-    const [, action, target] = interaction.customId.split(":");
+    const [, action, target, actionValue] = interaction.customId.split(":");
     try {
+      if (action === "rate" && interaction.isButton()) {
+        const rating = Number(actionValue);
+        const { ticket } = await api.transcript(target);
+        if (!ticket || ticket.status !== "Closed") throw new Error("This ticket is no longer available for rating.");
+        if (interaction.user.id !== ticket.discordUserId) throw new Error("Only the customer who opened this ticket can rate it.");
+        await api.updateTicket(ticket.id, { action: "rating", rating });
+        await interaction.update({ content: `Thanks — you rated this ticket ${rating} out of 5.`, embeds: [], components: [] });
+        return true;
+      }
+      if (action === "faq-resolved" && interaction.isButton()) {
+        if (interaction.user.id !== target) throw new Error("This support menu belongs to another user.");
+        pendingMessages.delete(interaction.user.id);
+        await interaction.update({ content: "Glad that helped. You can message me again whenever you need support.", embeds: [], components: [], attachments: [] });
+        return true;
+      }
       if (action === "new" && interaction.isStringSelectMenu()) {
         if (interaction.user.id !== target) throw new Error("This support menu belongs to another user.");
         await interaction.deferUpdate();
@@ -756,6 +826,11 @@ function createModmail({ client, guild, api, logger = console }) {
           username: client.user.username
         }, "Automatically closed after six hours without a customer reply.").catch(error => logger.warn(`Could not apply close delay for #${ticket.ticketNumber}: ${error.message}`));
       }
+      const { reminders = [], closures = [], reminderHours, closeHours } = await api.dueInactivity();
+      for (const ticket of reminders) await sendInactivityReminder(ticket, reminderHours, closeHours).catch(error => logger.warn(`Could not send inactivity reminder for #${ticket.ticketNumber}: ${error.message}`));
+      for (const ticket of closures) {
+        await closeTicket(ticket, { id: client.user.id, tag: client.user.tag, username: client.user.username }, `Automatically closed after ${closeHours} hours without a customer reply.`).catch(error => logger.warn(`Could not close inactive ticket #${ticket.ticketNumber}: ${error.message}`));
+      }
       const { actions = [] } = await api.pendingActions();
       for (const action of actions) {
         try {
@@ -763,6 +838,11 @@ function createModmail({ client, guild, api, logger = console }) {
           const actor = { id: action.requestedByDiscordId, tag: action.requestedByName, username: action.requestedByName };
           if (action.action === "claim") await claimTicket(ticket, actor);
           else if (action.action === "transfer") await transferTicket(ticket, action.payload?.teamId, actor);
+          else if (action.action === "priority") {
+            const updated = await api.updateTicket(ticket.id, { action: "priority", priority: action.payload?.priority });
+            const channel = await ensureChannel(updated.ticket);
+            await channel.send(`🚩 Ticket priority changed to **${updated.ticket.priority}** from the Hub.`);
+          }
           else if (action.action === "close") await closeTicket(ticket, actor, action.payload?.reason || "Closed from the Hub");
           else if (action.action === "close-delay") await startCloseDelay(ticket, actor);
           else if (action.action === "reopen") await reopenTicket(ticket, actor);
@@ -779,7 +859,27 @@ function createModmail({ client, guild, api, logger = console }) {
     }
   }
 
-  return { closeForMemberLeave, closeTicket, getConfig, handleAutocomplete, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
+  async function handleAvailabilityCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      await getConfig();
+      const member = interaction.member || await guild.members.fetch(interaction.user.id).catch(() => null);
+      if (!isConfiguredSupportStaff(member)) throw new Error("Only configured Unity Airlines support staff can set availability.");
+      const status = interaction.options.getString("status", true);
+      const result = await api.setStaffAvailability({
+        discordUserId: interaction.user.id,
+        discordUsername: interaction.user.tag || interaction.user.username,
+        status
+      });
+      await interaction.editReply(`You are now marked as **${result.availability.status}** in the support dashboard.`);
+      return true;
+    } catch (error) {
+      await interaction.editReply(error.message).catch(() => null);
+      return true;
+    }
+  }
+
+  return { closeForMemberLeave, closeTicket, getConfig, handleAutocomplete, handleAvailabilityCommand, handleInteraction, handleMessage, handleTicketCommand, processPendingActions, reopenTicket };
 }
 
 module.exports = { createModmail, messagePayload, safeChannelName, transcriptText };
