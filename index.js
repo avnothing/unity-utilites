@@ -211,7 +211,7 @@ async function handleOwnerMention(message) {
     return null;
   });
 
-  if (notice) setTimeout(() => notice.delete().catch(() => null), 3_000).unref?.();
+  if (notice) setTimeout(() => notice.delete().catch(() => null), 5_000).unref?.();
   return true;
 }
 
