@@ -194,7 +194,31 @@ client.once(Events.ClientReady, async readyClient => {
   }
 });
 
-client.on(Events.MessageCreate, message => modmail?.handleMessage(message));
+async function handleOwnerMention(message) {
+  if (!message.inGuild() || message.guildId !== config.guildId || message.author.bot) return false;
+  if (!message.mentions.users.has("662339129249628160")) return false;
+
+  const notice = await message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0a8f5b)
+        .setTitle("Need support?")
+        .setDescription("Please do not ping avnothing. If you require support, please open a ticket by direct messaging me.")
+    ],
+    allowedMentions: { repliedUser: false }
+  }).catch(error => {
+    console.warn(`Could not send owner-mention notice: ${error.message}`);
+    return null;
+  });
+
+  if (notice) setTimeout(() => notice.delete().catch(() => null), 3_000).unref?.();
+  return true;
+}
+
+client.on(Events.MessageCreate, async message => {
+  await handleOwnerMention(message);
+  await modmail?.handleMessage(message);
+});
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isAutocomplete() && await modmail?.handleAutocomplete(interaction)) return;
