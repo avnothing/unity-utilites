@@ -239,7 +239,7 @@ client.once(Events.ClientReady, async readyClient => {
     modmail = createModmail({ client: readyClient, guild: state.guild, api });
     await Promise.all([registerCommands(), publishCatalogue(), modmail.getConfig(true)]);
     state.ready = true;
-    readyClient.user.setPresence({ activities: [{ name: "DM me for support.", type: ActivityType.Playing }], status: "online" });
+    readyClient.user.setPresence({ activities: [{ name: "DM me for support", type: ActivityType.Playing }], status: "online" });
     console.log(`Unity utilities bot ready as ${readyClient.user.tag} in ${state.guild.name}.`);
     roleSync.syncAll({ refreshMembers: true }).then(() => { state.lastRoleSyncAt = new Date().toISOString(); }).catch(error => console.error(`Initial role sync failed: ${error.message}`));
     catalogueTimer = safeInterval(publishCatalogue, 5 * 60_000, "Catalogue refresh failed");
