@@ -203,7 +203,7 @@ async function handleOwnerMention(message) {
       new EmbedBuilder()
         .setColor(0x0a8f5b)
         .setTitle("Need support?")
-        .setDescription("Please do not ping avnothing. If you require support, please open a ticket.")
+        .setDescription("Please do not ping avnothing. If you require support, please open a ticket.\n\n**Unnecessary pinging may result in disciplinary action.**")
     ],
     allowedMentions: { repliedUser: false }
   }).catch(error => {
@@ -211,9 +211,6 @@ async function handleOwnerMention(message) {
     return null;
   });
 
-  await message.delete().catch(error => {
-    console.warn(`Could not delete owner-ping message: ${error.message}`);
-  });
   if (notice) setTimeout(() => notice.delete().catch(() => null), 5_000).unref?.();
   return true;
 }
