@@ -24,10 +24,10 @@ function createHubApi({ portalUrl, botApiSecret }) {
 
   return {
     publishCatalogue: payload => request("/api/bot/main/catalogue", { method: "POST", body: payload }),
-    config: () => request("/api/bot/main/config"),
+    config: (scope = "main") => request(`/api/bot/main/config?scope=${encodeURIComponent(scope)}`),
     roleSyncAll: () => request("/api/bot/main/role-sync"),
     roleSyncMember: discordId => request(`/api/bot/main/role-sync/${encodeURIComponent(discordId)}`),
-    openTicket: discordId => request(`/api/bot/main/tickets/open/${encodeURIComponent(discordId)}`),
+    openTicket: (discordId, scope = "main") => request(`/api/bot/main/tickets/open/${encodeURIComponent(discordId)}?scope=${encodeURIComponent(scope)}`),
     channelTicket: channelId => request(`/api/bot/main/tickets/channel/${encodeURIComponent(channelId)}`),
     ticketByNumber: ticketNumber => request(`/api/bot/main/tickets/number/${encodeURIComponent(ticketNumber)}`),
     createTicket: payload => request("/api/bot/main/tickets", { method: "POST", body: payload }),
