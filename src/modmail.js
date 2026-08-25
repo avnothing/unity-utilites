@@ -219,10 +219,16 @@ function createModmail({ client, guild, api, logger = console }) {
       .setColor(BRAND_GREEN)
       .setTitle(renderTemplate(teamTemplate(ticket, "ticketOpenedTitle", "Support ticket #[ticket number] opened"), values))
       .setDescription(renderTemplate(teamTemplate(ticket, "ticketOpenedMessage", "Your message has been sent to **[ticket type]**. Reply in this direct message at any time to continue the conversation."), values))
-      .addFields({
-        name: renderTemplate(teamTemplate(ticket, "waitingTitle", "While you wait"), values).slice(0, 256),
-        value: renderTemplate(teamTemplate(ticket, "waitingMessage", "A member of the support team will answer your ticket soon. Please check our [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749) and [Careers information](https://discord.com/channels/1532393442590851313/1532415361960509651)."), values).slice(0, 1024)
-      })
+      .setFooter({ text: "Unity Airlines Support" })
+      .setTimestamp();
+  }
+
+  function waitingEmbed(ticket) {
+    const values = ticketTemplateValues(ticket);
+    return new EmbedBuilder()
+      .setColor(BRAND_GREEN)
+      .setTitle(renderTemplate(teamTemplate(ticket, "waitingTitle", "While you wait"), values))
+      .setDescription(renderTemplate(teamTemplate(ticket, "waitingMessage", "A member of the support team will answer your ticket soon. Please check our [Information & FAQ](https://discord.com/channels/1532393442590851313/1532410732874825749) and [Careers information](https://discord.com/channels/1532393442590851313/1532415361960509651)."), values).slice(0, 4096))
       .setFooter({ text: "Unity Airlines Support" })
       .setTimestamp();
   }
@@ -256,7 +262,10 @@ function createModmail({ client, guild, api, logger = console }) {
     });
     const ticket = created.ticket;
     await sendUserMessageToStaff(ticket, message);
-    if (notify) await message.author.send({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
+    if (notify) {
+      await message.author.send({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket) });
+      await message.author.send({ embeds: [waitingEmbed(ticket)] });
+    }
     return ticket;
   }
 
@@ -665,6 +674,7 @@ function createModmail({ client, guild, api, logger = console }) {
         pendingMessages.delete(interaction.user.id);
         const ticket = await openForMessage(message, interaction.values[0], { notify: false });
         await interaction.editReply({ embeds: [ticketOpenedEmbed(ticket)], components: customerTicketControls(ticket), attachments: [] });
+        await interaction.followUp({ embeds: [waitingEmbed(ticket)] });
         return true;
       }
       if (action === "user-close" && interaction.isButton()) {

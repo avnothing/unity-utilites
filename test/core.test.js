@@ -134,6 +134,7 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.match(modmail, /const BRAND_GREEN = 0x0a8f5b/);
   assert.match(modmail, /function renderTemplate/);
   assert.match(modmail, /function teamTemplate/);
+  assert.match(modmail, /function waitingEmbed/);
   assert.match(modmail, /function staffRank/);
   assert.match(modmail, /setFooter\(\{ text: `Rank · \$\{rank\}` \}\)/);
   assert.doesNotMatch(modmail, /name: "Staff member"/);
@@ -141,6 +142,7 @@ test("uses branded, template-driven customer embeds and shows staff rank", () =>
   assert.doesNotMatch(modmail, /Open · waiting for a staff member/);
   assert.match(modmail, /Ticket closure cancelled/);
   assert.match(modmail, /A member of the support team will answer your ticket soon/);
+  assert.match(modmail, /interaction\.followUp\(\{ embeds: \[waitingEmbed\(ticket\)\] \}\)/);
   assert.match(modmail, /closeDelayCancelledMessage/);
   assert.match(modmail, /1532410732874825749/);
   assert.match(modmail, /1532415361960509651/);
