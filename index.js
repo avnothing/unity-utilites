@@ -203,7 +203,7 @@ async function handleOwnerMention(message) {
       new EmbedBuilder()
         .setColor(0x0a8f5b)
         .setTitle("Need support?")
-        .setDescription("Please do not ping avnothing. If you require support, please open a ticket by direct messaging me.")
+        .setDescription("Please do not ping avnothing. If you require support, please open a ticket.")
     ],
     allowedMentions: { repliedUser: false }
   }).catch(error => {
