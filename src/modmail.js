@@ -715,7 +715,11 @@ function createModmail({ client, guild, api, logger = console }) {
   }
 
   async function handleAutocomplete(interaction) {
-    if (!interaction.isAutocomplete() || interaction.commandName !== "ticket") return false;
+    if (
+      !interaction.isAutocomplete() ||
+      interaction.commandName !== "support" ||
+      interaction.options.getSubcommandGroup(false) !== "ticket"
+    ) return false;
     const focused = interaction.options.getFocused().toLowerCase();
     try {
       await getConfig();
