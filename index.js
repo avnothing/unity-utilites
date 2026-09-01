@@ -65,49 +65,40 @@ async function registerCommands() {
   const commands = [
     new SlashCommandBuilder()
       .setName("support")
-      .setDescription("Learn how to open a private Unity Airlines support ticket"),
+      .setDescription("Open support or manage Unity Airlines tickets")
+      .addSubcommand(command => command.setName("open").setDescription("Learn how to open a private support ticket"))
+      .addSubcommandGroup(group => group.setName("ticket").setDescription("Staff ticket controls")
+        .addSubcommand(command => command.setName("claim").setDescription("Claim the ticket in this channel"))
+        .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
+          .addStringOption(option => option.setName("reason").setDescription("Why it is being closed").setRequired(true).setMaxLength(500)))
+        .addSubcommand(command => command.setName("close-delay").setDescription("Close in six hours unless the customer replies"))
+        .addSubcommand(command => command.setName("priority").setDescription("Set this ticket's priority")
+          .addStringOption(option => option.setName("priority").setDescription("Ticket priority").setRequired(true).addChoices(
+            { name: "Low", value: "Low" }, { name: "Normal", value: "Normal" }, { name: "High", value: "High" }, { name: "Urgent", value: "Urgent" }
+          )))
+        .addSubcommand(command => command.setName("note").setDescription("Add a private staff note")
+          .addStringOption(option => option.setName("note").setDescription("Private note").setRequired(true).setMaxLength(1900)))
+        .addSubcommand(command => command.setName("transfer").setDescription("Transfer to another support team")
+          .addStringOption(option => option.setName("team").setDescription("New support team").setRequired(true).setAutocomplete(true)))
+        .addSubcommand(command => command.setName("add").setDescription("Add another staff member")
+          .addUserOption(option => option.setName("staff_member").setDescription("Staff member to add").setRequired(true)))
+        .addSubcommand(command => command.setName("user").setDescription("Show customer and routing information"))
+        .addSubcommand(command => command.setName("transcript").setDescription("Generate the current transcript"))
+        .addSubcommand(command => command.setName("reopen").setDescription("Reopen a closed ticket")
+          .addIntegerOption(option => option.setName("ticket_number").setDescription("Ticket number").setRequired(true).setMinValue(1)))),
     new SlashCommandBuilder()
-      .setName("ticket")
-      .setDescription("Manage Unity Airlines modmail tickets")
+      .setName("utilities")
+      .setDescription("Role synchronisation, dashboard and bot status")
       .setDMPermission(false)
-      .addSubcommand(command => command.setName("claim").setDescription("Claim the ticket in this channel"))
-      .addSubcommand(command => command.setName("close").setDescription("Close this ticket and save its transcript")
-        .addStringOption(option => option.setName("reason").setDescription("Why the ticket is being closed").setRequired(true).setMaxLength(500)))
-      .addSubcommand(command => command.setName("close-delay").setDescription("Close in six hours unless the customer replies"))
-      .addSubcommand(command => command.setName("priority").setDescription("Set this ticket's priority")
-        .addStringOption(option => option.setName("priority").setDescription("Ticket priority").setRequired(true).addChoices(
-          { name: "Low", value: "Low" }, { name: "Normal", value: "Normal" }, { name: "High", value: "High" }, { name: "Urgent", value: "Urgent" }
-        )))
-      .addSubcommand(command => command.setName("note").setDescription("Add a private staff note without messaging the customer")
-        .addStringOption(option => option.setName("note").setDescription("Private note for staff in this ticket").setRequired(true).setMaxLength(1900)))
-      .addSubcommand(command => command.setName("transfer").setDescription("Transfer this ticket to another support team")
-        .addStringOption(option => option.setName("team").setDescription("New support team").setRequired(true).setAutocomplete(true)))
-      .addSubcommand(command => command.setName("add").setDescription("Add another staff member to this ticket")
-        .addUserOption(option => option.setName("staff_member").setDescription("Staff member to add").setRequired(true)))
-      .addSubcommand(command => command.setName("user").setDescription("Show the customer and routing information for this ticket"))
-      .addSubcommand(command => command.setName("transcript").setDescription("Generate the current ticket transcript"))
-      .addSubcommand(command => command.setName("reopen").setDescription("Reopen a closed ticket by its number")
-        .addIntegerOption(option => option.setName("ticket_number").setDescription("Ticket number shown in the dashboard or log").setRequired(true).setMinValue(1))),
-    new SlashCommandBuilder()
-      .setName("role-sync")
-      .setDescription("Control staff role synchronisation")
-      .setDMPermission(false)
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
-      .addSubcommand(command => command.setName("run").setDescription("Run a full staff and Customer role sync now"))
-      .addSubcommand(command => command.setName("member").setDescription("Synchronise one member now")
-        .addUserOption(option => option.setName("member").setDescription("Main-server member to synchronise").setRequired(true)))
-      .addSubcommand(command => command.setName("status").setDescription("Show role-sync configuration and last-run status")),
-    new SlashCommandBuilder()
-      .setName("dashboard")
-      .setDescription("Open the Unity Airlines modmail dashboard")
-      .setDMPermission(false)
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-    new SlashCommandBuilder()
-      .setName("utilities-status")
-      .setDescription("Show the utilities bot, Hub, modmail and role-sync status")
-      .setDMPermission(false)
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-];
+      .addSubcommandGroup(group => group.setName("roles").setDescription("Staff role synchronisation")
+        .addSubcommand(command => command.setName("run").setDescription("Run a full role sync now"))
+        .addSubcommand(command => command.setName("member").setDescription("Synchronise one member")
+          .addUserOption(option => option.setName("member").setDescription("Main-server member").setRequired(true)))
+        .addSubcommand(command => command.setName("status").setDescription("Show role-sync status")))
+      .addSubcommandGroup(group => group.setName("hub").setDescription("Hub and bot tools")
+        .addSubcommand(command => command.setName("dashboard").setDescription("Open the modmail dashboard"))
+        .addSubcommand(command => command.setName("status").setDescription("Show utilities, Hub and sync health")))
+  ]
   const rest = new REST({ version: "10" }).setToken(config.token);
   await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
   await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands.map(command => command.toJSON()) });
@@ -224,16 +215,18 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isAutocomplete() && await modmail?.handleAutocomplete(interaction)) return;
     if (await modmail?.handleInteraction(interaction)) return;
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName === "support") {
+    const group = interaction.options.getSubcommandGroup(false);
+    const subcommand = interaction.options.getSubcommand(false);
+    if (interaction.commandName === "support" && !group && subcommand === "open") {
       await interaction.reply({ content: `Direct-message <@${client.user.id}> to open a private Unity Airlines support ticket. You will be asked to choose the right support team.`, ephemeral: true });
-    } else if (interaction.commandName === "ticket") {
+    } else if (interaction.commandName === "support" && group === "ticket") {
       await modmail.handleTicketCommand(interaction);
-    } else if (interaction.commandName === "role-sync") {
+    } else if (interaction.commandName === "utilities" && group === "roles") {
       await handleRoleSyncCommand(interaction);
-    } else if (interaction.commandName === "dashboard") {
+    } else if (interaction.commandName === "utilities" && group === "hub" && subcommand === "dashboard") {
       const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel("Open Modmail Dashboard").setURL(`${config.portalUrl}/portal.html?page=modmail`));
       await interaction.reply({ content: "Open the private Unity Airlines Hub dashboard:", components: [row], ephemeral: true });
-    } else if (interaction.commandName === "utilities-status") {
+    } else if (interaction.commandName === "utilities" && group === "hub" && subcommand === "status") {
       await handleUtilitiesStatus(interaction);
     }
   } catch (error) {
